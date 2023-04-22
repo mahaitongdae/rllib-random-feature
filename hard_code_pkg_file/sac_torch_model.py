@@ -1,0 +1,480 @@
+import gymnasium as gym
+from gymnasium.spaces import Box, Discrete
+import numpy as np
+import tree  # pip install dm_tree
+from typing import Dict, List, Optional
+
+from ray.rllib.models.catalog import ModelCatalog
+from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
+from ray.rllib.utils.annotations import override
+from ray.rllib.utils.framework import try_import_torch
+from ray.rllib.utils.spaces.simplex import Simplex
+from ray.rllib.utils.typing import ModelConfigDict, TensorType, TensorStructType
+
+torch, nn = try_import_torch()
+
+class RandomFeatureNetwork(TorchModelV2, nn.Module):
+    """
+    Random feature network.
+    """
+
+    def __init__(self, obs_space: gym.spaces.Space, action_space: gym.spaces.Space, num_outputs: int,
+                 model_config: ModelConfigDict, name: str):
+        TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
+        nn.Module.__init__(self)
+
+        prev_layer_size = int(np.product(obs_space.shape))
+        random_feature_dim = model_config.get('random_feature_dim')
+        self.random_feature_dim = random_feature_dim
+
+        fourier_random_feature = nn.Linear(prev_layer_size, random_feature_dim)
+        if model_config.get('sigma') > 0:
+            nn.init.normal_(fourier_random_feature.weight, std=1. / model_config.get('sigma'))
+        else:
+            nn.init.normal_(fourier_random_feature.weight)
+        nn.init.uniform_(fourier_random_feature.bias, 0, 2. * np.pi)
+        learn_rf = model_config.get('learn_rf', False)
+        fourier_random_feature.weight.requires_grad = learn_rf
+        fourier_random_feature.bias.requires_grad = learn_rf
+        self.fournier_random_feature = fourier_random_feature
+
+        linear1 = nn.Linear(random_feature_dim, 1)
+        linear1.bias.requires_grad = False
+        self.linear1 = linear1
+        self.dynamics_type = model_config.get('dynamics_type')
+        if self.dynamics_type == 'quadrotor_2d':
+            self.stabilizing_target = model_config.get('stabilizing_target')
+        self.dynamics_parameters = model_config.get('dynamics_parameters')
+        # self.device = torch.device('cuda' if torch.cuda.is_avaliable() else 'cpu')
+
+    def forward(
+            self,
+            input_dict: Dict[str, TensorType],
+            state: List[TensorType],
+            seq_lens: TensorType,
+    ) -> (TensorType, List[TensorType]):
+        obs = input_dict["obs_flat"].float()
+        self._last_flat_in = obs.reshape(obs.shape[0], -1)
+        x = torch.cos(self.fournier_random_feature(self._last_flat_in))
+        x = torch.div(x, 1. / self.random_feature_dim)
+        logits = self.linear1(x)
+        return logits, state
+
+    def value_function(self) -> TensorType:
+        raise NotImplementedError
+
+
+class SACTorchModel(TorchModelV2, nn.Module):
+    """Extension of the standard TorchModelV2 for SAC.
+
+    To customize, do one of the following:
+    - sub-class SACTorchModel and override one or more of its methods.
+    - Use SAC's `q_model_config` and `policy_model` keys to tweak the default model
+      behaviors (e.g. fcnet_hiddens, conv_filters, etc..).
+    - Use SAC's `q_model_config->custom_model` and `policy_model->custom_model` keys
+      to specify your own custom Q-model(s) and policy-models, which will be
+      created within this SACTFModel (see `build_policy_model` and
+      `build_q_model`.
+
+    Note: It is not recommended to override the `forward` method for SAC. This
+    would lead to shared weights (between policy and Q-nets), which will then
+    not be optimized by either of the critic- or actor-optimizers!
+
+    Data flow:
+        `obs` -> forward() (should stay a noop method!) -> `model_out`
+        `model_out` -> get_policy_output() -> pi(actions|obs)
+        `model_out`, `actions` -> get_q_values() -> Q(s, a)
+        `model_out`, `actions` -> get_twin_q_values() -> Q_twin(s, a)
+    """
+
+    def __init__(
+        self,
+        obs_space: gym.spaces.Space,
+        action_space: gym.spaces.Space,
+        num_outputs: Optional[int],
+        model_config: ModelConfigDict,
+        name: str,
+        policy_model_config: ModelConfigDict = None,
+        q_model_config: ModelConfigDict = None,
+        twin_q: bool = False,
+        initial_alpha: float = 1.0,
+        target_entropy: Optional[float] = None,
+    ):
+        """Initializes a SACTorchModel instance.
+        7
+                Args:
+                    policy_model_config: The config dict for the
+                        policy network.
+                    q_model_config: The config dict for the
+                        Q-network(s) (2 if twin_q=True).
+                    twin_q: Build twin Q networks (Q-net and target) for more
+                        stable Q-learning.
+                    initial_alpha: The initial value for the to-be-optimized
+                        alpha parameter (default: 1.0).
+                    target_entropy (Optional[float]): A target entropy value for
+                        the to-be-optimized alpha parameter. If None, will use the
+                        defaults described in the papers for SAC (and discrete SAC).
+
+                Note that the core layers for forward() are not defined here, this
+                only defines the layers for the output heads. Those layers for
+                forward() should be defined in subclasses of SACModel.
+        """
+        nn.Module.__init__(self)
+        super(SACTorchModel, self).__init__(
+            obs_space, action_space, num_outputs, model_config, name
+        )
+
+        if isinstance(action_space, Discrete):
+            self.action_dim = action_space.n
+            self.discrete = True
+            action_outs = q_outs = self.action_dim
+        elif isinstance(action_space, Box):
+            self.action_dim = np.product(action_space.shape)
+            self.discrete = False
+            action_outs = 2 * self.action_dim
+            q_outs = 1
+        else:
+            assert isinstance(action_space, Simplex)
+            self.action_dim = np.product(action_space.shape)
+            self.discrete = False
+            action_outs = self.action_dim
+            q_outs = 1
+
+        # Build the policy network.
+        self.action_model = self.build_policy_model(
+            self.obs_space, action_outs, policy_model_config, "policy_model"
+        )
+
+        # Build the Q-network(s).
+        self.q_net = self.build_q_model(
+            self.obs_space, self.action_space, q_outs, q_model_config, "q"
+        )
+        if twin_q:
+            self.twin_q_net = self.build_q_model(
+                self.obs_space, self.action_space, q_outs, q_model_config, "twin_q"
+            )
+        else:
+            self.twin_q_net = None
+
+        log_alpha = nn.Parameter(
+            torch.from_numpy(np.array([np.log(initial_alpha)])).float()
+        )
+        self.register_parameter("log_alpha", log_alpha)
+
+        # Auto-calculate the target entropy.
+        if target_entropy is None or target_entropy == "auto":
+            # See hyperparams in [2] (README.md).
+            if self.discrete:
+                target_entropy = 0.98 * np.array(
+                    -np.log(1.0 / action_space.n), dtype=np.float32
+                )
+            # See [1] (README.md).
+            else:
+                target_entropy = -np.prod(action_space.shape)
+
+        target_entropy = nn.Parameter(
+            torch.from_numpy(np.array([target_entropy])).float(), requires_grad=False
+        )
+        self.register_parameter("target_entropy", target_entropy)
+
+    @override(TorchModelV2)
+    def forward(
+        self,
+        input_dict: Dict[str, TensorType],
+        state: List[TensorType],
+        seq_lens: TensorType,
+    ) -> (TensorType, List[TensorType]):
+        """The common (Q-net and policy-net) forward pass.
+
+        NOTE: It is not(!) recommended to override this method as it would
+        introduce a shared pre-network, which would be updated by both
+        actor- and critic optimizers.
+        """
+        return input_dict["obs"], state
+
+    def build_policy_model(self, obs_space, num_outputs, policy_model_config, name):
+        """Builds the policy model used by this SAC.
+
+        Override this method in a sub-class of SACTFModel to implement your
+        own policy net. Alternatively, simply set `custom_model` within the
+        top level SAC `policy_model` config key to make this default
+        implementation of `build_policy_model` use your custom policy network.
+
+        Returns:
+            TorchModelV2: The TorchModelV2 policy sub-model.
+        """
+        model = ModelCatalog.get_model_v2(
+            obs_space,
+            self.action_space,
+            num_outputs,
+            policy_model_config,
+            framework="torch",
+            name=name,
+        )
+        return model
+
+    def build_q_model(self, obs_space, action_space, num_outputs, q_model_config, name):
+        """Builds one of the (twin) Q-nets used by this SAC.
+
+        Override this method in a sub-class of SACTFModel to implement your
+        own Q-nets. Alternatively, simply set `custom_model` within the
+        top level SAC `q_model_config` config key to make this default implementation
+        of `build_q_model` use your custom Q-nets.
+
+        Returns:
+            TorchModelV2: The TorchModelV2 Q-net sub-model.
+        """
+        self.concat_obs_and_actions = False
+        if self.discrete:
+            input_space = obs_space
+        else:
+            orig_space = getattr(obs_space, "original_space", obs_space)
+            if isinstance(orig_space, Box) and len(orig_space.shape) == 1:
+                input_space = Box(
+                    float("-inf"),
+                    float("inf"),
+                    shape=(orig_space.shape[0] + action_space.shape[0],),
+                )
+                self.concat_obs_and_actions = True
+            else:
+                input_space = gym.spaces.Tuple([orig_space, action_space])
+
+        model = ModelCatalog.get_model_v2(
+            input_space,
+            action_space,
+            num_outputs,
+            q_model_config,
+            framework="torch",
+            name=name,
+        )
+        return model
+
+    def get_q_values(
+        self, model_out: TensorType, actions: Optional[TensorType] = None
+    ) -> TensorType:
+        """Returns Q-values, given the output of self.__call__().
+
+        This implements Q(s, a) -> [single Q-value] for the continuous case and
+        Q(s) -> [Q-values for all actions] for the discrete case.
+
+        Args:
+            model_out: Feature outputs from the model layers
+                (result of doing `self.__call__(obs)`).
+            actions (Optional[TensorType]): Continuous action batch to return
+                Q-values for. Shape: [BATCH_SIZE, action_dim]. If None
+                (discrete action case), return Q-values for all actions.
+
+        Returns:
+            TensorType: Q-values tensor of shape [BATCH_SIZE, 1].
+        """
+        return self._get_q_value(model_out, actions, self.q_net)
+
+    def get_twin_q_values(
+        self, model_out: TensorType, actions: Optional[TensorType] = None
+    ) -> TensorType:
+        """Same as get_q_values but using the twin Q net.
+
+        This implements the twin Q(s, a).
+
+        Args:
+            model_out: Feature outputs from the model layers
+                (result of doing `self.__call__(obs)`).
+            actions (Optional[Tensor]): Actions to return the Q-values for.
+                Shape: [BATCH_SIZE, action_dim]. If None (discrete action
+                case), return Q-values for all actions.
+
+        Returns:
+            TensorType: Q-values tensor of shape [BATCH_SIZE, 1].
+        """
+        return self._get_q_value(model_out, actions, self.twin_q_net)
+
+    def _get_q_value(self, model_out, actions, net):
+        # Model outs may come as original Tuple observations, concat them
+        # here if this is the case.
+        if isinstance(net.obs_space, Box):
+            if isinstance(model_out, (list, tuple)):
+                model_out = torch.cat(model_out, dim=-1)
+            elif isinstance(model_out, dict):
+                model_out = torch.cat(list(model_out.values()), dim=-1)
+
+        # Continuous case -> concat actions to model_out.
+        if actions is not None:
+            if self.concat_obs_and_actions:
+                input_dict = {"obs": torch.cat([model_out, actions], dim=-1)}
+            else:
+                # TODO(junogng) : SampleBatch doesn't support list columns yet.
+                #     Use ModelInputDict.
+                input_dict = {"obs": (model_out, actions)}
+        # Discrete case -> return q-vals for all actions.
+        else:
+            input_dict = {"obs": model_out}
+        # Switch on training mode (when getting Q-values, we are usually in
+        # training).
+        input_dict["is_training"] = True
+
+        return net(input_dict, [], None)
+
+    def get_action_model_outputs(
+        self,
+        model_out: TensorType,
+        state_in: List[TensorType] = None,
+        seq_lens: TensorType = None,
+    ) -> (TensorType, List[TensorType]):
+        """Returns distribution inputs and states given the output of
+        policy.model().
+
+        For continuous action spaces, these will be the mean/stddev
+        distribution inputs for the (SquashedGaussian) action distribution.
+        For discrete action spaces, these will be the logits for a categorical
+        distribution.
+
+        Args:
+            model_out: Feature outputs from the model layers
+                (result of doing `model(obs)`).
+            state_in List(TensorType): State input for recurrent cells
+            seq_lens: Sequence lengths of input- and state
+                sequences
+
+        Returns:
+            TensorType: Distribution inputs for sampling actions.
+        """
+
+        def concat_obs_if_necessary(obs: TensorStructType):
+            """Concat model outs if they come as original tuple observations."""
+            if isinstance(obs, (list, tuple)):
+                obs = torch.cat(obs, dim=-1)
+            elif isinstance(obs, dict):
+                obs = torch.cat(
+                    [
+                        torch.unsqueeze(val, 1) if len(val.shape) == 1 else val
+                        for val in tree.flatten(obs.values())
+                    ],
+                    dim=-1,
+                )
+            return obs
+
+        if state_in is None:
+            state_in = []
+
+        if isinstance(model_out, dict) and "obs" in model_out:
+            # Model outs may come as original Tuple observations
+            if isinstance(self.action_model.obs_space, Box):
+                model_out["obs"] = concat_obs_if_necessary(model_out["obs"])
+            return self.action_model(model_out, state_in, seq_lens)
+        else:
+            if isinstance(self.action_model.obs_space, Box):
+                model_out = concat_obs_if_necessary(model_out)
+            return self.action_model({"obs": model_out}, state_in, seq_lens)
+
+    def policy_variables(self):
+        """Return the list of variables for the policy net."""
+
+        return self.action_model.variables()
+
+    def q_variables(self):
+        """Return the list of variables for Q / twin Q nets."""
+
+        return self.q_net.variables() + (
+            self.twin_q_net.variables() if self.twin_q_net else []
+        )
+    
+    
+class SACTorchRFModel(SACTorchModel):
+
+    def __init__(
+            self,
+            obs_space: gym.spaces.Space,
+            action_space: gym.spaces.Space,
+            num_outputs: Optional[int],
+            model_config: ModelConfigDict,
+            name: str,
+            policy_model_config: ModelConfigDict = None,
+            q_model_config: ModelConfigDict = None,
+            twin_q: bool = False,
+            initial_alpha: float = 1.0,
+            target_entropy: Optional[float] = None,
+    ):
+        super().__init__(obs_space, action_space, num_outputs, model_config, name, policy_model_config, q_model_config,
+                         twin_q, initial_alpha, target_entropy)
+
+        if isinstance(action_space, Discrete):
+            action_outs = q_outs = self.action_dim
+        elif isinstance(action_space, Box):
+            q_outs = 1
+        else:
+            assert isinstance(action_space, Simplex)
+            q_outs = 1
+
+        self.q_net = RandomFeatureNetwork(obs_space, action_space, q_outs, q_model_config, 'q1')
+
+        if twin_q:
+            self.twin_q_net = RandomFeatureNetwork(obs_space, action_space, q_outs, q_model_config, 'q1')
+
+    def _get_q_value(self, model_out, actions, net):
+        # Model outs may come as original Tuple observations, concat them
+        # here if this is the case.
+        if isinstance(net.obs_space, Box):
+            if isinstance(model_out, (list, tuple)):
+                model_out = torch.cat(model_out, dim=-1)
+            elif isinstance(model_out, dict):
+                model_out = torch.cat(list(model_out.values()), dim=-1)
+
+        # Continuous case -> concat actions to model_out.
+        if actions is not None:
+            if self.q_net.dynamics_type == 'quadrotor_2d':
+                obs_tp1 = self.quadrotor_f_star_6d(model_out, actions)
+            elif self.q_net.dynamics_type == 'pendulum':
+                obs_tp1 = self.pendulum_3d(model_out, actions)
+            input_dict = {"obs": obs_tp1}
+        # Discrete case -> return q-vals for all actions.
+        else:
+            input_dict = {"obs": model_out}
+        # Switch on training mode (when getting Q-values, we are usually in
+        # training).
+        input_dict["is_training"] = True
+
+        v_tp1, state_out = net(input_dict, [], None)
+        q_t = self._get_reward(model_out, actions) + v_tp1
+
+        return q_t, state_out
+
+    def pendulum_3d(self, obs, action, g=10.0, m=1., l=1., max_a=2., max_speed=8., dt=0.05):
+        th = torch.atan2(obs[:, 1], obs[:, 0])  # 1 is sin, 0 is cosine
+        thdot = obs[:, 2]
+        action = torch.reshape(action, (action.shape[0],))
+        u = torch.clip(action, -max_a, max_a)
+        newthdot = thdot + (3. * g / (2 * l) * torch.sin(th) + 3.0 / (m * l ** 2) * u) * dt
+        newthdot = torch.clip(newthdot, -max_speed, max_speed)
+        newth = th + newthdot * dt
+        new_states = torch.empty((obs.shape[0], 3))
+        new_states[:, 0] = torch.cos(newth)
+        new_states[:, 1] = torch.sin(newth)
+        new_states[:, 2] = newthdot
+        return new_states
+
+    def quadrotor_f_star_6d(self, states, action, m=0.027, g=10.0, Iyy=1.4e-5, dt=0.0167):
+        dot_states = torch.empty_like(states)
+        dot_states[:, 0] = states[:, 1]
+        dot_states[:, 1] = 1 / m * torch.multiply(torch.sum(action, dim=1), torch.sin(states[:, 4]))
+        dot_states[:, 2] = states[:, 3]
+        dot_states[:, 3] = 1 / m * torch.multiply(torch.sum(action, dim=1), torch.cos(states[:, 4])) - g
+        dot_states[:, 4] = states[:, 5]
+        dot_states[:, 5] = 1 / 2 / Iyy * (action[:, 1] - action[:, 0])
+
+        new_states = states + dt * dot_states
+
+        return new_states
+
+    def _get_reward(self, obs, action):
+        if self.q_net.dynamics_type == 'pendulum':
+            assert obs.shape[1] == 3
+            th = torch.atan2(obs[:, 1], obs[:, 0])  # 1 is sin, 0 is cosine
+            thdot = obs[:, 2]
+            action = torch.reshape(action, (action.shape[0],))
+            th = ((th + np.pi) % (2 * np.pi)) - np.pi
+            reward = -(th ** 2 + 0.1 * thdot ** 2 + 0.01 * action ** 2)
+        elif self.q_net.dynamics_type == 'quadrotor_2d':
+            assert obs.shape[1] == 6
+            state_error = obs - self.q_net.dynamics_parameters.get('stabilizing_target')
+            reward = torch.exp(-(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1)))
+        return torch.reshape(reward, (reward.shape[0], 1))

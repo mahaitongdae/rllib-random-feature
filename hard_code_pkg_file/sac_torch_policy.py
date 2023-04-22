@@ -1,6 +1,5 @@
 """
-Modified from rllib.algorithm.sac.sac_torch_policy.
-1. remove tf support.
+PyTorch policy class used for SAC.
 """
 
 import gymnasium as gym
@@ -17,7 +16,7 @@ from ray.rllib.algorithms.sac.sac_tf_policy import (
     validate_spaces,
 )
 from ray.rllib.algorithms.dqn.dqn_tf_policy import PRIO_WEIGHTS
-from ray.rllib.models.catalog import ModelCatalog, MODEL_DEFAULTS
+from ray.rllib.models.catalog import ModelCatalog
 from ray.rllib.models.modelv2 import ModelV2
 from ray.rllib.models.torch.torch_action_dist import (
     TorchCategorical,
@@ -44,22 +43,11 @@ from ray.rllib.utils.typing import (
     TensorType,
     AlgorithmConfigDict,
 )
-import copy
-from  sac_torch_random_feature_model import SACTorchRFModel
-from ray.rllib.utils.typing import ModelConfigDict
 
 torch, nn = try_import_torch()
 F = nn.functional
 
 logger = logging.getLogger(__name__)
-
-RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 512,
-                                      'sigma': 0,
-                                      'learn_rf': False,
-                                      'dynamics_type': 'pendulum',
-                                      'dynamics_parameters': {}}
-
-RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
 
 
 def _get_dist_class(
@@ -118,78 +106,9 @@ def build_sac_model_and_action_dist(
             target model will be created in this function and assigned to
             `policy.target_model`.
     """
-    model = build_rfsac_model(policy, obs_space, action_space, config)
+    model = build_sac_model(policy, obs_space, action_space, config)
     action_dist_class = _get_dist_class(policy, config, action_space)
     return model, action_dist_class
-
-def build_rfsac_model(
-    policy: Policy,
-    obs_space: gym.spaces.Space,
-    action_space: gym.spaces.Space,
-    config: AlgorithmConfigDict,
-) -> ModelV2:
-    """Constructs the necessary ModelV2 for the Policy and returns it.
-
-    Args:
-        policy: The TFPolicy that will use the models.
-        obs_space (gym.spaces.Space): The observation space.
-        action_space (gym.spaces.Space): The action space.
-        config: The SAC trainer's config dict.
-
-    Returns:
-        ModelV2: The ModelV2 to be used by the Policy. Note: An additional
-            target model will be created in this function and assigned to
-            `policy.target_model`.
-    """
-    # Force-ignore any additionally provided hidden layer sizes.
-    # Everything should be configured using SAC's `q_model_config` and
-    # `policy_model_config` config settings.
-    policy_model_config = copy.deepcopy(MODEL_DEFAULTS)
-    policy_model_config.update(config["policy_model_config"])
-    q_model_config = copy.deepcopy(RF_MODEL_DEFAULTS)
-    q_model_config.update(config["q_model_config"])
-
-    default_model_cls = SACTorchRFModel
-
-    model = ModelCatalog.get_model_v2(
-        obs_space=obs_space,
-        action_space=action_space,
-        num_outputs=None,
-        model_config=config["model"],
-        framework=config["framework"],
-        default_model=default_model_cls,
-        name="sac_model",
-        policy_model_config=policy_model_config,
-        q_model_config=q_model_config,
-        twin_q=config["twin_q"],
-        initial_alpha=config["initial_alpha"],
-        target_entropy=config["target_entropy"],
-    )
-
-    assert isinstance(model, default_model_cls)
-
-    # Create an exact copy of the model and store it in `policy.target_model`.
-    # This will be used for tau-synched Q-target models that run behind the
-    # actual Q-networks and are used for target q-value calculations in the
-    # loss terms.
-    policy.target_model = ModelCatalog.get_model_v2(
-        obs_space=obs_space,
-        action_space=action_space,
-        num_outputs=None,
-        model_config=config["model"],
-        framework=config["framework"],
-        default_model=default_model_cls,
-        name="target_sac_model",
-        policy_model_config=policy_model_config,
-        q_model_config=q_model_config,
-        twin_q=config["twin_q"],
-        initial_alpha=config["initial_alpha"],
-        target_entropy=config["target_entropy"],
-    )
-
-    assert isinstance(policy.target_model, default_model_cls)
-
-    return model
 
 
 def action_distribution_fn(
@@ -580,8 +499,8 @@ def setup_late_mixins(
 
 # Build a child class of `TorchPolicy`, given the custom functions defined
 # above.
-SACTorchRFPolicy = build_policy_class(
-    name="SACTorchRFPolicy",
+SACTorchPolicy = build_policy_class(
+    name="SACTorchPolicy",
     framework="torch",
     loss_fn=actor_critic_loss,
     get_default_config=lambda: ray.rllib.algorithms.sac.sac.DEFAULT_CONFIG,
@@ -596,5 +515,3 @@ SACTorchRFPolicy = build_policy_class(
     mixins=[TargetNetworkMixin, ComputeTDErrorMixin],
     action_distribution_fn=action_distribution_fn,
 )
-
-a = 0

@@ -14,12 +14,22 @@ from ray.rllib.models.torch.fcnet import FullyConnectedNetwork
 from ray.rllib.utils.framework import try_import_torch
 from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.algorithms.sac import SACConfig
+from utils import angle_normalize
 
 # torch, nn = try_import_torch()
 import torch
 import torch.nn as nn
 
 logger = logging.getLogger(__name__)
+
+RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 256,
+                                      'sigma': 0,
+                                      'learn_rf': False,
+                                      'dynamics_type': 'pendulum',
+                                      'dynamics_parameters': {'stabilizing_target': torch.tensor([0.0, 0.0, 0.5, 0.0, 0.0, 0.0]),
+                                                              }}
+
+RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
 
 
 class RandomFeatureNetwork(TorchModelV2, nn.Module):
@@ -50,27 +60,11 @@ class RandomFeatureNetwork(TorchModelV2, nn.Module):
         linear1 = nn.Linear(random_feature_dim, 1)
         linear1.bias.requires_grad = False
         self.linear1 = linear1
+        self.dynamics_type = model_config.get('dynamics_type')
+        if self.dynamics_type == 'quadrotor_2d':
+            self.stabilizing_target = model_config.get('stabilizing_target')
+        self.dynamics_parameters = model_config.get('dynamics_parameters')
         # self.device = torch.device('cuda' if torch.cuda.is_avaliable() else 'cpu')
-
-    # def pendulum_3d(self, states, action, g=10.0, m=1., l=1., max_a=2., max_speed=8., dt=0.05):
-    #     th = torch.atan2(states[:, 1], states[:, 0])  # 1 is sin, 0 is cosine
-    #     thdot = states[:, 2]
-    #     action = torch.reshape(action, (action.shape[0],))
-    #     u = torch.clip(action, -max_a, max_a)
-    #     newthdot = thdot + (3. * g / (2 * l) * torch.sin(th) + 3.0 / (m * l ** 2) * u) * dt
-    #     newthdot = torch.clip(newthdot, -max_speed, max_speed)
-    #     newth = th + newthdot * dt
-    #     # new_states = torch.empty((states.shape[0],3))
-    #     # # print("new states shape 1", new_states.shape)
-    #     # new_states[:,0] = torch.cos(newth)
-    #     # new_states[:,1] = torch.sin(newth)
-    #     # new_states[:,2] = newthdot
-    #     # print("new states shape", new_states.shape)
-    #     new_states = torch.empty((states.shape[0], 3))
-    #     new_states[:, 0] = torch.cos(newth)
-    #     new_states[:, 1] = torch.sin(newth)
-    #     new_states[:, 2] = newthdot
-    #     return new_states.to(self.device)
 
     def forward(
             self,
@@ -104,7 +98,8 @@ class SACTorchRFModel(SACTorchModel):
             initial_alpha: float = 1.0,
             target_entropy: Optional[float] = None,
     ):
-        super().__init__(obs_space, action_space, num_outputs, model_config, name, policy_model_config, q_model_config, twin_q, initial_alpha, target_entropy)
+        super().__init__(obs_space, action_space, num_outputs, model_config, name, policy_model_config, q_model_config,
+                         twin_q, initial_alpha, target_entropy)
 
         if isinstance(action_space, Discrete):
             action_outs = q_outs = self.action_dim
@@ -119,8 +114,77 @@ class SACTorchRFModel(SACTorchModel):
         if twin_q:
             self.twin_q_net = RandomFeatureNetwork(obs_space, action_space, q_outs, q_model_config, 'q1')
 
+    def _get_q_value(self, model_out, actions, net):
+        # Model outs may come as original Tuple observations, concat them
+        # here if this is the case.
+        if isinstance(net.obs_space, Box):
+            if isinstance(model_out, (list, tuple)):
+                model_out = torch.cat(model_out, dim=-1)
+            elif isinstance(model_out, dict):
+                model_out = torch.cat(list(model_out.values()), dim=-1)
 
-ModelCatalog.register_custom_model("sac_rf_model", SACTorchRFModel)
+        # Continuous case -> concat actions to model_out.
+        if actions is not None:
+            if self.q_net.dynamics_type == 'quadrotor_2d':
+                obs_tp1 = self.quadrotor_f_star_6d(model_out, actions)
+            elif self.q_net.dynamics_type == 'pendulum':
+                obs_tp1 = self.pendulum_3d(model_out, actions)
+            input_dict = {"obs": obs_tp1}
+        # Discrete case -> return q-vals for all actions.
+        else:
+            input_dict = {"obs": model_out}
+        # Switch on training mode (when getting Q-values, we are usually in
+        # training).
+        input_dict["is_training"] = True
+
+        v_tp1, state_out = net(input_dict, [], None)
+        q_t = self._get_reward(model_out, actions) + v_tp1
+
+        return q_t, state_out
+
+    def pendulum_3d(self, obs, action, g=10.0, m=1., l=1., max_a=2., max_speed=8., dt=0.05):
+        th = torch.atan2(obs[:, 1], obs[:, 0])  # 1 is sin, 0 is cosine
+        thdot = obs[:, 2]
+        action = torch.reshape(action, (action.shape[0],))
+        u = torch.clip(action, -max_a, max_a)
+        newthdot = thdot + (3. * g / (2 * l) * torch.sin(th) + 3.0 / (m * l ** 2) * u) * dt
+        newthdot = torch.clip(newthdot, -max_speed, max_speed)
+        newth = th + newthdot * dt
+        new_states = torch.empty((obs.shape[0], 3))
+        new_states[:, 0] = torch.cos(newth)
+        new_states[:, 1] = torch.sin(newth)
+        new_states[:, 2] = newthdot
+        return new_states
+
+    def quadrotor_f_star_6d(self, states, action, m=0.027, g=10.0, Iyy=1.4e-5, dt=0.0167):
+        dot_states = torch.empty_like(states)
+        dot_states[:, 0] = states[:, 1]
+        dot_states[:, 1] = 1 / m * torch.multiply(torch.sum(action, dim=1), torch.sin(states[:, 4]))
+        dot_states[:, 2] = states[:, 3]
+        dot_states[:, 3] = 1 / m * torch.multiply(torch.sum(action, dim=1), torch.cos(states[:, 4])) - g
+        dot_states[:, 4] = states[:, 5]
+        dot_states[:, 5] = 1 / 2 / Iyy * (action[:, 1] - action[:, 0])
+
+        new_states = states + dt * dot_states
+
+        return new_states
+
+    def _get_reward(self, obs, action):
+        if self.q_net.dynamics_type == 'pendulum':
+            assert obs.shape[1] == 3
+            th = torch.atan2(obs[:, 1], obs[:, 0])  # 1 is sin, 0 is cosine
+            thdot = obs[:, 2]
+            action = torch.reshape(action, (action.shape[0],))
+            th = angle_normalize(th)
+            reward = -(th ** 2 + 0.1 * thdot ** 2 + 0.01 * action ** 2)
+        elif self.q_net.dynamics_type == 'quadrotor_2d':
+            assert obs.shape[1] == 6
+            state_error = obs - self.q_net.dynamics_parameters.get('stabilizing_target')
+            reward = torch.exp(-(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1)))
+        return torch.reshape(reward, (reward.shape[0], 1))
+
+
+# ModelCatalog.register_custom_model("sac_rf_model", SACTorchRFModel)
 
 ### test model
 
@@ -130,11 +194,6 @@ if __name__ == '__main__':
 
     # Run in eager mode for value checking and debugging.
     # tf1.enable_eager_execution()
-    RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 256,
-                                          'sigma': 0,
-                                          'learn_rf': False}
-
-    RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
 
     # __sphinx_doc_model_construct_1_begin__
     rf_model = ModelCatalog.get_model_v2(
@@ -149,23 +208,26 @@ if __name__ == '__main__':
         # are available in the returned class.
         model_interface=SACTorchRFModel,
         name="rf_q_model",
-        policy_model_config = SACConfig().policy_model_config,
-        q_model_config = RF_MODEL_DEFAULTS
+        policy_model_config=SACConfig().policy_model_config,
+        q_model_config=RF_MODEL_DEFAULTS
     )
     # __sphinx_doc_model_construct_1_end__
 
     batch_size = 10
     input_ = np.array([obs_space.sample() for _ in range(batch_size)])
+    actions_ = np.array([action_space.sample() for _ in range(batch_size)])
     # Note that for PyTorch, you will have to provide torch tensors here.
     # if args.framework == "torch":
     input_ = torch.from_numpy(input_)
+    actions = torch.from_numpy(actions_)
 
-    input_dict = SampleBatch(obs=input_, _is_training=False)
+    input_dict = SampleBatch(obs=input_, _is_training=True)
+    # actions = SampleBatch(action=actions_, _is_training=False)
     # out, state_outs = rf_model(input_dict=input_dict)
     # print(out, state_outs)
     # assert out.shape == (10, 256)
     # Pass `out` into `get_q_values`
-    q_values, _ = rf_model.get_q_values(input_dict)
+    q_values, _ = rf_model.get_q_values(input_dict, actions)
     action, _ = rf_model.get_action_model_outputs(input_dict)
     print(action)
     print(q_values)
