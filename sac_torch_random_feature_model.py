@@ -25,9 +25,10 @@ logger = logging.getLogger(__name__)
 RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 256,
                                       'sigma': 0,
                                       'learn_rf': False,
-                                      'dynamics_type': 'pendulum',
+                                      'dynamics_type': 'quadrotor_2d',
                                       'dynamics_parameters': {'stabilizing_target': torch.tensor([0.0, 0.0, 0.5, 0.0, 0.0, 0.0]),
-                                                              }}
+                                                              },
+                                      'sin_input': True}
 
 RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
 
@@ -64,6 +65,7 @@ class RandomFeatureNetwork(TorchModelV2, nn.Module):
         if self.dynamics_type == 'quadrotor_2d':
             self.stabilizing_target = model_config.get('stabilizing_target')
         self.dynamics_parameters = model_config.get('dynamics_parameters')
+        self.sin_input = model_config.get('sin_input', False)
         # self.device = torch.device('cuda' if torch.cuda.is_avaliable() else 'cpu')
 
     def forward(
@@ -126,7 +128,10 @@ class SACTorchRFModel(SACTorchModel):
         # Continuous case -> concat actions to model_out.
         if actions is not None:
             if self.q_net.dynamics_type == 'quadrotor_2d':
-                obs_tp1 = self.quadrotor_f_star_6d(model_out, actions)
+                if self.q_net.sin_input:
+                    obs_tp1 = self.quadrotor_f_star_7d(model_out, actions)
+                else:
+                    obs_tp1 = self.quadrotor_f_star_6d(model_out, actions)
             elif self.q_net.dynamics_type == 'pendulum':
                 obs_tp1 = self.pendulum_3d(model_out, actions)
             input_dict = {"obs": obs_tp1}
@@ -169,6 +174,22 @@ class SACTorchRFModel(SACTorchModel):
 
         return new_states
 
+    def quadrotor_f_star_7d(self, states, action, m=0.027, g=10.0, Iyy=1.4e-5, dt=0.0167):
+        new_states = torch.empty_like(states)
+        new_states[:, 0] = states[:, 0] + dt * states[:, 1]
+        new_states[:, 1] = states[:, 1] + dt * (1 / m * torch.multiply(torch.sum(action, dim=1), torch.sin(states[:, 4])))
+        new_states[:, 2] = states[:, 2] + dt * states[:, 3]
+        new_states[:, 3] = states[:, 3] + dt * (1 / m * torch.multiply(torch.sum(action, dim=1), torch.cos(states[:, 4])) - g)
+        theta = torch.atan2(states[:, -2], states[:, -3])
+        new_theta = theta + dt * states[:, 5]
+        new_states[:, 4] = torch.cos(new_theta)
+        new_states[:, 5] = torch.sin(new_theta)
+        new_states[:, 6] = states[:, 6] + dt * (1 / 2 / Iyy * (action[:, 1] - action[:, 0]))
+
+        # new_states = states + dt * dot_states
+
+        return new_states
+
     def _get_reward(self, obs, action):
         if self.q_net.dynamics_type == 'pendulum':
             assert obs.shape[1] == 3
@@ -178,9 +199,20 @@ class SACTorchRFModel(SACTorchModel):
             th = angle_normalize(th)
             reward = -(th ** 2 + 0.1 * thdot ** 2 + 0.01 * action ** 2)
         elif self.q_net.dynamics_type == 'quadrotor_2d':
-            assert obs.shape[1] == 6
-            state_error = obs - self.q_net.dynamics_parameters.get('stabilizing_target')
-            reward = torch.exp(-(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1)))
+            if isinstance(self.q_net.dynamics_parameters.get('stabilizing_target'), list):
+                stabilizing_target = torch.tensor(self.q_net.dynamics_parameters.get('stabilizing_target'))
+            else:
+                stabilizing_target = self.q_net.dynamics_parameters.get('stabilizing_target')
+            if self.q_net.sin_input is False:
+                assert obs.shape[1] == 6
+                state_error = obs - stabilizing_target
+                reward = torch.exp(-(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1)))
+            else:
+                assert obs.shape[1] == 7
+                th = torch.unsqueeze(torch.atan2(obs[:, -2], obs[:, -3]), dim=1)  # -2 is sin, -3 is cos
+                obs = torch.hstack([obs[:, :4], th, obs[:, -1:]])
+                state_error = obs - stabilizing_target
+                reward = torch.exp(-(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1)))
         return torch.reshape(reward, (reward.shape[0], 1))
 
 
@@ -189,8 +221,8 @@ class SACTorchRFModel(SACTorchModel):
 ### test model
 
 if __name__ == '__main__':
-    obs_space = Box(-1.0, 1.0, (3,))
-    action_space = Box(-1.0, 1.0, (1,))
+    obs_space = Box(-1.0, 1.0, (7,))
+    action_space = Box(-1.0, 1.0, (2,))
 
     # Run in eager mode for value checking and debugging.
     # tf1.enable_eager_execution()
