@@ -135,7 +135,7 @@ class CartPoleEnv(gym.Env[np.ndarray, Union[int, np.ndarray]]):
         assert self.state is not None, "Call reset before using step method."
         x, x_dot, theta, theta_dot = self.state
         # force = self.force_mag if action == 1 else -self.force_mag # discrete action space
-        force = self.force_mag * action
+        force = float(self.force_mag * action)
         costheta = math.cos(theta)
         sintheta = math.sin(theta)
 
@@ -170,11 +170,12 @@ class CartPoleEnv(gym.Env[np.ndarray, Union[int, np.ndarray]]):
         )
 
         if not terminated:
-            reward = 1.0
+            # reward = 1.0
+            reward = float(- x ** 2 - x_dot ** 2 - theta ** 2 - theta_dot ** 2 - 0.01 * force ** 2)
         elif self.steps_beyond_terminated is None:
             # Pole just fell!
             self.steps_beyond_terminated = 0
-            reward = 1.0
+            reward = -10.0
         else:
             if self.steps_beyond_terminated == 0:
                 logger.warn(
@@ -184,7 +185,7 @@ class CartPoleEnv(gym.Env[np.ndarray, Union[int, np.ndarray]]):
                     "True' -- any further steps are undefined behavior."
                 )
             self.steps_beyond_terminated += 1
-            reward = 0.0
+            reward = -10.0
 
         if self.render_mode == "human":
             self.render()

@@ -24,7 +24,7 @@ REWARD_SCALE = 0.1
 RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 8192,
                                       'sigma': 0,
                                       'learn_rf': False,
-                                      'dynamics_type': 'quadrotor_2d', # pendulum, quadrotor_2d
+                                      'dynamics_type': 'Quadrotor2D', # Pendulum, Quadrotor2D
                                       'dynamics_parameters': {'stabilizing_target': [0.0, 0.0, 0.5, 0.0, 0.0, 0.0],
                                                               'reward_exponential': True,
                                                               'reward_scale': REWARD_SCALE,
@@ -69,30 +69,47 @@ def env_creator(env_config):
     else:
         return TransformReward(env, lambda r: REWARD_SCALE * r)
 
-def env_creator_mujoco_cartpole(env_config):
+def env_creator_cartpole(env_config):
     from gymnasium.envs.registration import register
 
-    register(id='CartPole-v2',
-             entry_point='envs:CartPoleEnv')
-    env = gymnasium.make('CartPole-v2')
+    register(id='CartPoleContinuous-v0',
+             entry_point='envs:CartPoleEnv',
+             max_episode_steps=300)
+    env = gymnasium.make('CartPoleContinuous-v0', render_mode='human')
     return env
 
 def train_rfsac(args):
     RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
+    RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
 
-    register_env('Quadrotor-v1', env_creator)
+    register_env('Quadrotor2D-v1', env_creator)
+    register_env('CartPoleContinuous-v0', env_creator_cartpole)
 
-    config = RFSACConfig().environment(env='Quadrotor-v1')\
-        .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1)
+    if args.algo == 'RFSAC':
+        config = RFSACConfig().environment(env=args.env_id)\
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=2)
+
+    elif args.algo == 'SAC':
+        config = SACConfig().environment(env=args.env_id)\
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=2)
+
+    if args.eval:
+        config = config.evaluation(
+            evaluation_interval=1,
+            evaluation_duration=5,
+            evaluation_num_workers=1,
+            evaluation_config=RFSACConfig.overrides(render_env=True)
+            )
 
     algo = config.build()
 
-    algo.restore('/home/mht/ray_results/RFSAC_Quadrotor-v1_2023-05-08_18-58-048lea_yvt/checkpoint_000451')
+    # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3/checkpoint_000451')
+    algo.restore('/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-37-2148n_4kxq/checkpoint_000451')
 
-    for i in range(500):
+    train_iter = 1 if args.eval else 500
+    for i in range(train_iter):
         result = algo.train()
         print(pretty_print(result))
-        print(result.keys())
 
         if i % 50 == 0:
             checkpoint_dir = algo.save()
@@ -101,13 +118,17 @@ def train_rfsac(args):
 
 if __name__ == "__main__":
 
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--random_feature_dim", default=32768, type=int)
-    # args = parser.parse_args()
-    # train_rfsac(args)
-    env = env_creator_mujoco_cartpole(ENV_CONFIG)
-    print(env.reset())
-    print(env.observation_space)
-    print(env.action_space)
-    action = env.action_space.sample()
-    print(env.step(action))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--random_feature_dim", default=4096, type=int)
+    parser.add_argument("--env_id", default='CartPoleContinuous-v0', type=str)
+    parser.add_argument("--algo", default='SAC', type=str)
+    parser.add_argument("--eval", default=False, type=bool)
+    args = parser.parse_args()
+    train_rfsac(args)
+    # env = env_creator_cartpole(ENV_CONFIG)
+    # print(env.reset())
+    # print(env.observation_space)
+    # print(env.action_space)
+    # action = env.action_space.sample()
+    # print(env.step(action))
+    # print(env.step(action))

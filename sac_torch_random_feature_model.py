@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 256,
                                       'sigma': 0,
                                       'learn_rf': False,
-                                      'dynamics_type': 'quadrotor_2d',
+                                      'dynamics_type': 'CartPoleContinuous',
                                       'dynamics_parameters': {'stabilizing_target': torch.tensor([0.0, 0.0, 0.5, 0.0, 0.0, 0.0]),
                                                               },
-                                      'sin_input': True}
+                                      'sin_input': False}
 
 RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
 
@@ -127,13 +127,18 @@ class SACTorchRFModel(SACTorchModel):
 
         # Continuous case -> concat actions to model_out.
         if actions is not None:
-            if self.q_net.dynamics_type == 'quadrotor_2d':
+            if self.q_net.dynamics_type == 'Quadrotor2D':
                 if self.q_net.sin_input:
                     obs_tp1 = self.quadrotor_f_star_7d(model_out, actions)
                 else:
                     obs_tp1 = self.quadrotor_f_star_6d(model_out, actions)
-            elif self.q_net.dynamics_type == 'pendulum':
+            elif self.q_net.dynamics_type == 'Pendulum':
                 obs_tp1 = self.pendulum_3d(model_out, actions)
+            elif self.q_net.dynamics_type == 'CartPoleContinuous':
+                if self.q_net.sin_input is False:
+                    obs_tp1 = self.cartpole_f_4d(model_out, actions)
+                else:
+                    raise NotImplementedError
             input_dict = {"obs": obs_tp1}
         # Discrete case -> return q-vals for all actions.
         else:
@@ -190,15 +195,51 @@ class SACTorchRFModel(SACTorchModel):
 
         return new_states
 
+    def cartpole_f_4d(self, states, action, ):
+        """
+
+        :param states: # x, x_dot, theta, theta_dot
+        :param action: Force applied to the cart
+        :return: new states
+        """
+        masscart = 1.0
+        masspole = 0.1
+        length = 0.5
+        total_mass = masspole + masscart
+        polemass_length = masspole * length
+        dt = 0.02
+        gravity = 9.81
+        new_states = torch.empty_like(states)
+        new_states[:, 0] = states[:, 0] + dt * states[:, 1]
+        new_states[:, 2] = states[:, 2] + dt * states[:, 3]
+        theta = states[:, 2]
+        theta_dot = states[:, 3]
+        costheta = torch.cos(theta)
+        sintheta = torch.sin(theta)
+        force = torch.squeeze(10. * action)
+
+        # For the interested reader:
+        # https://coneural.org/florian/papers/05_cart_pole.pdf
+        temp = 1. / total_mass * (
+                       force + polemass_length * theta_dot ** 2 * sintheta
+               )
+        thetaacc = (gravity * sintheta - costheta * temp) / (
+                length * (4.0 / 3.0 - masspole * costheta ** 2 / total_mass)
+        )
+        xacc = temp - polemass_length * thetaacc * costheta / total_mass
+        new_states[:, 1] = states[:, 1] + dt * xacc
+        new_states[:, 3] = theta_dot + dt * thetaacc
+        return new_states
+
     def _get_reward(self, obs, action):
-        if self.q_net.dynamics_type == 'pendulum':
+        if self.q_net.dynamics_type == 'Pendulum':
             assert obs.shape[1] == 3
             th = torch.atan2(obs[:, 1], obs[:, 0])  # 1 is sin, 0 is cosine
             thdot = obs[:, 2]
             action = torch.reshape(action, (action.shape[0],))
             th = angle_normalize(th)
             reward = -(th ** 2 + 0.1 * thdot ** 2 + 0.01 * action ** 2)
-        elif self.q_net.dynamics_type == 'quadrotor_2d':
+        elif self.q_net.dynamics_type == 'Quadrotor2D':
             if isinstance(self.q_net.dynamics_parameters.get('stabilizing_target'), list):
                 stabilizing_target = torch.tensor(self.q_net.dynamics_parameters.get('stabilizing_target'))
             else:
@@ -206,13 +247,20 @@ class SACTorchRFModel(SACTorchModel):
             if self.q_net.sin_input is False:
                 assert obs.shape[1] == 6
                 state_error = obs - stabilizing_target
-                reward = torch.exp(-(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1)))
+                reward = -(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1))
+                if self.q_net.dynamics_parameters.get('reward_exponential'):
+                    reward = torch.exp(reward)
             else:
                 assert obs.shape[1] == 7
-                th = torch.unsqueeze(torch.atan2(obs[:, -2], obs[:, -3]), dim=1)  # -2 is sin, -3 is cos
+                th = torch.unsqueeze(torch.atan2(obs[:, -2], obs[:, -3]), dim=1) # -2 is sin, -3 is cos
                 obs = torch.hstack([obs[:, :4], th, obs[:, -1:]])
                 state_error = obs - stabilizing_target
-                reward = torch.exp(-(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1)))
+                reward = -(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1))
+                if self.q_net.dynamics_parameters.get('reward_exponential'):
+                    reward = torch.exp(reward)
+        elif self.q_net.dynamics_type == 'CartPoleContinuous':
+            if self.q_net.sin_input is False:
+                reward = -(torch.sum(obs ** 2, dim=1) + torch.sum(0.01 * action ** 2, dim=1))
         return torch.reshape(reward, (reward.shape[0], 1))
 
 
@@ -221,8 +269,8 @@ class SACTorchRFModel(SACTorchModel):
 ### test model
 
 if __name__ == '__main__':
-    obs_space = Box(-1.0, 1.0, (7,))
-    action_space = Box(-1.0, 1.0, (2,))
+    obs_space = Box(-1.0, 1.0, (4,))
+    action_space = Box(-1.0, 1.0, (1,))
 
     # Run in eager mode for value checking and debugging.
     # tf1.enable_eager_execution()
