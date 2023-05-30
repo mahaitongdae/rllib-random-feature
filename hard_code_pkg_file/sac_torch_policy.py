@@ -12,6 +12,7 @@ import ray
 import ray.experimental.tf_utils
 from ray.rllib.algorithms.sac.sac_tf_policy import (
     build_sac_model,
+    build_rfsac_model,
     postprocess_trajectory,
     validate_spaces,
 )
@@ -107,6 +108,29 @@ def build_sac_model_and_action_dist(
             `policy.target_model`.
     """
     model = build_sac_model(policy, obs_space, action_space, config)
+    action_dist_class = _get_dist_class(policy, config, action_space)
+    return model, action_dist_class
+
+def build_rfsac_model_and_action_dist(
+    policy: Policy,
+    obs_space: gym.spaces.Space,
+    action_space: gym.spaces.Space,
+    config: AlgorithmConfigDict,
+) -> Tuple[ModelV2, Type[TorchDistributionWrapper]]:
+    """Constructs the necessary ModelV2 and action dist class for the Policy.
+
+    Args:
+        policy: The TFPolicy that will use the models.
+        obs_space (gym.spaces.Space): The observation space.
+        action_space (gym.spaces.Space): The action space.
+        config: The SAC trainer's config dict.
+
+    Returns:
+        ModelV2: The ModelV2 to be used by the Policy. Note: An additional
+            target model will be created in this function and assigned to
+            `policy.target_model`.
+    """
+    model = build_rfsac_model(policy, obs_space, action_space, config)
     action_dist_class = _get_dist_class(policy, config, action_space)
     return model, action_dist_class
 
@@ -511,6 +535,23 @@ SACTorchPolicy = build_policy_class(
     validate_spaces=validate_spaces,
     before_loss_init=setup_late_mixins,
     make_model_and_action_dist=build_sac_model_and_action_dist,
+    extra_learn_fetches_fn=concat_multi_gpu_td_errors,
+    mixins=[TargetNetworkMixin, ComputeTDErrorMixin],
+    action_distribution_fn=action_distribution_fn,
+)
+
+RFSACTorchPolicy = build_policy_class(
+    name="RFSACTorchPolicy",
+    framework="torch",
+    loss_fn=actor_critic_loss,
+    get_default_config=lambda: ray.rllib.algorithms.sac.sac.DEFAULT_CONFIG,
+    stats_fn=stats,
+    postprocess_fn=postprocess_trajectory,
+    extra_grad_process_fn=apply_grad_clipping,
+    optimizer_fn=optimizer_fn,
+    validate_spaces=validate_spaces,
+    before_loss_init=setup_late_mixins,
+    make_model_and_action_dist=build_rfsac_model_and_action_dist,
     extra_learn_fetches_fn=concat_multi_gpu_td_errors,
     mixins=[TargetNetworkMixin, ComputeTDErrorMixin],
     action_distribution_fn=action_distribution_fn,

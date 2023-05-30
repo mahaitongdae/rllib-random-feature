@@ -34,7 +34,7 @@ RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 8192,
 
 RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
 
-ENV_CONFIG = {'sin_input': False}
+ENV_CONFIG = {'sin_input': True}
 
 RF_MODEL_DEFAULTS.update(ENV_CONFIG)
 
@@ -82,7 +82,7 @@ def env_creator_cartpole(env_config):
     register(id='CartPoleContinuous-v0',
              entry_point='envs:CartPoleEnv',
              max_episode_steps=300)
-    env = gymnasium.make('CartPoleContinuous-v0') #, render_mode='human'
+    env = gymnasium.make('CartPoleContinuous-v0', render_mode='human') #
     env = TransformReward(env, lambda r: np.exp(r))
     if ENV_CONFIG.get('sin_input'):
         return TransformTriangleObservationWrapper(env)
@@ -121,7 +121,7 @@ def train_rfsac(args):
         json.dump(RF_MODEL_DEFAULTS, fp)
 
     # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3/checkpoint_000451')
-    # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-51-176qhk6ywr/checkpoint_000451')
+    algo.restore('/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-51-17i_cw3m6f/checkpoint_000451')
 
     train_iter = 1 if args.eval else 500
     for i in range(train_iter):
@@ -138,9 +138,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--random_feature_dim", default=2048, type=int)
     parser.add_argument("--env_id", default='CartPoleContinuous-v0', type=str)
-    parser.add_argument("--algo", default='RFSAC', type=str)
+    parser.add_argument("--algo", default='SAC', type=str)
     parser.add_argument("--reward_exp", default=True, type=str)
-    parser.add_argument("--eval", default=False, type=bool)
+    parser.add_argument("--eval", default=True, type=bool)
     args = parser.parse_args()
     train_rfsac(args)
     # env = env_creator_cartpole(ENV_CONFIG)

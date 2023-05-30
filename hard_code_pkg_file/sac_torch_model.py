@@ -45,6 +45,7 @@ class RandomFeatureNetwork(TorchModelV2, nn.Module):
         if self.dynamics_type == 'quadrotor_2d':
             self.stabilizing_target = model_config.get('stabilizing_target')
         self.dynamics_parameters = model_config.get('dynamics_parameters')
+        self.sin_input = model_config.get('sin_input', False)
         # self.device = torch.device('cuda' if torch.cuda.is_avaliable() else 'cpu')
 
     def forward(
@@ -56,7 +57,7 @@ class RandomFeatureNetwork(TorchModelV2, nn.Module):
         obs = input_dict["obs_flat"].float()
         self._last_flat_in = obs.reshape(obs.shape[0], -1)
         x = torch.cos(self.fournier_random_feature(self._last_flat_in))
-        x = torch.div(x, 1. / self.random_feature_dim)
+        # x = torch.div(x, 1. / self.random_feature_dim)
         logits = self.linear1(x)
         return logits, state
 
@@ -421,10 +422,18 @@ class SACTorchRFModel(SACTorchModel):
 
         # Continuous case -> concat actions to model_out.
         if actions is not None:
-            if self.q_net.dynamics_type == 'quadrotor_2d':
-                obs_tp1 = self.quadrotor_f_star_6d(model_out, actions)
-            elif self.q_net.dynamics_type == 'pendulum':
+            if self.q_net.dynamics_type == 'Quadrotor2D':
+                if self.q_net.sin_input:
+                    obs_tp1 = self.quadrotor_f_star_7d(model_out, actions)
+                else:
+                    obs_tp1 = self.quadrotor_f_star_6d(model_out, actions)
+            elif self.q_net.dynamics_type == 'Pendulum':
                 obs_tp1 = self.pendulum_3d(model_out, actions)
+            elif self.q_net.dynamics_type == 'CartPoleContinuous':
+                if self.q_net.sin_input is False:
+                    obs_tp1 = self.cartpole_f_4d(model_out, actions)
+                else:
+                    obs_tp1 = self.cartpole_f_5d(model_out, actions)
             input_dict = {"obs": obs_tp1}
         # Discrete case -> return q-vals for all actions.
         else:
@@ -465,16 +474,134 @@ class SACTorchRFModel(SACTorchModel):
 
         return new_states
 
+    def quadrotor_f_star_7d(self, states, action, m=0.027, g=10.0, Iyy=1.4e-5, dt=0.0167):
+        new_states = torch.empty_like(states)
+        new_states[:, 0] = states[:, 0] + dt * states[:, 1]
+        new_states[:, 1] = states[:, 1] + dt * (1 / m * torch.multiply(torch.sum(action, dim=1), torch.sin(states[:, 4])))
+        new_states[:, 2] = states[:, 2] + dt * states[:, 3]
+        new_states[:, 3] = states[:, 3] + dt * (1 / m * torch.multiply(torch.sum(action, dim=1), torch.cos(states[:, 4])) - g)
+        theta = torch.atan2(states[:, -2], states[:, -3])
+        new_theta = theta + dt * states[:, 5]
+        new_states[:, 4] = torch.cos(new_theta)
+        new_states[:, 5] = torch.sin(new_theta)
+        new_states[:, 6] = states[:, 6] + dt * (1 / 2 / Iyy * (action[:, 1] - action[:, 0]))
+
+        # new_states = states + dt * dot_states
+
+        return new_states
+
+    def cartpole_f_4d(self, states, action, ):
+        """
+
+        :param states: # x, x_dot, theta, theta_dot
+        :param action: Force applied to the cart
+        :return: new states
+        """
+        masscart = 1.0
+        masspole = 0.1
+        length = 0.5
+        total_mass = masspole + masscart
+        polemass_length = masspole * length
+        dt = 0.02
+        gravity = 9.81
+        new_states = torch.empty_like(states)
+        new_states[:, 0] = states[:, 0] + dt * states[:, 1]
+        new_states[:, 2] = states[:, 2] + dt * states[:, 3]
+        theta = states[:, 2]
+        theta_dot = states[:, 3]
+        costheta = torch.cos(theta)
+        sintheta = torch.sin(theta)
+        force = torch.squeeze(10. * action)
+
+        # For the interested reader:
+        # https://coneural.org/florian/papers/05_cart_pole.pdf
+        temp = 1. / total_mass * (
+                       force + polemass_length * theta_dot ** 2 * sintheta
+               )
+        thetaacc = (gravity * sintheta - costheta * temp) / (
+                length * (4.0 / 3.0 - masspole * costheta ** 2 / total_mass)
+        )
+        xacc = temp - polemass_length * thetaacc * costheta / total_mass
+        new_states[:, 1] = states[:, 1] + dt * xacc
+        new_states[:, 3] = theta_dot + dt * thetaacc
+        return new_states
+
+    def cartpole_f_5d(self, states, action, ):
+        """
+
+        :param states: # x, x_dot, sin_theta, cos_theta, theta_dot
+        :param action: Force applied to the cart
+        :return: new states
+        """
+        masscart = 1.0
+        masspole = 0.1
+        length = 0.5
+        total_mass = masspole + masscart
+        polemass_length = masspole * length
+        dt = 0.02
+        gravity = 9.81
+        new_states = torch.empty_like(states)
+        new_states[:, 0] = states[:, 0] + dt * states[:, 1]
+        costheta = states[:, -3]
+        sintheta = states[:, -2]
+        theta_dot = states[:, -1]
+        theta = torch.atan2(sintheta, costheta)
+        new_theta = theta + dt * theta_dot
+        new_states[:, -3] = torch.cos(new_theta)
+        new_states[:, -2] = torch.sin(new_theta)
+        # new_states[:, 2] = states[:, 2] + dt * states[:, 3]
+        # theta = states[:, 2]
+
+
+
+        force = torch.squeeze(10. * action)
+
+        # For the interested reader:
+        # https://coneural.org/florian/papers/05_cart_pole.pdf
+        temp = 1. / total_mass * (
+                       force + polemass_length * theta_dot ** 2 * sintheta
+               )
+        thetaacc = (gravity * sintheta - costheta * temp) / (
+                length * (4.0 / 3.0 - masspole * costheta ** 2 / total_mass)
+        )
+        xacc = temp - polemass_length * thetaacc * costheta / total_mass
+        new_states[:, 1] = states[:, 1] + dt * xacc
+        new_states[:, 4] = theta_dot + dt * thetaacc
+        return new_states
+
     def _get_reward(self, obs, action):
-        if self.q_net.dynamics_type == 'pendulum':
+        if self.q_net.dynamics_type == 'Pendulum':
             assert obs.shape[1] == 3
             th = torch.atan2(obs[:, 1], obs[:, 0])  # 1 is sin, 0 is cosine
             thdot = obs[:, 2]
             action = torch.reshape(action, (action.shape[0],))
-            th = ((th + np.pi) % (2 * np.pi)) - np.pi
+            th = angle_normalize(th)
             reward = -(th ** 2 + 0.1 * thdot ** 2 + 0.01 * action ** 2)
-        elif self.q_net.dynamics_type == 'quadrotor_2d':
-            assert obs.shape[1] == 6
-            state_error = obs - self.q_net.dynamics_parameters.get('stabilizing_target')
-            reward = torch.exp(-(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1)))
+        elif self.q_net.dynamics_type == 'Quadrotor2D':
+            if isinstance(self.q_net.dynamics_parameters.get('stabilizing_target'), list):
+                stabilizing_target = torch.tensor(self.q_net.dynamics_parameters.get('stabilizing_target'))
+            else:
+                stabilizing_target = self.q_net.dynamics_parameters.get('stabilizing_target')
+            if self.q_net.sin_input is False:
+                assert obs.shape[1] == 6
+                state_error = obs - stabilizing_target
+                reward = -(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1))
+                if self.q_net.dynamics_parameters.get('reward_exponential'):
+                    reward = torch.exp(reward)
+            else:
+                assert obs.shape[1] == 7
+                th = torch.unsqueeze(torch.atan2(obs[:, -2], obs[:, -3]), dim=1) # -2 is sin, -3 is cos
+                obs = torch.hstack([obs[:, :4], th, obs[:, -1:]])
+                state_error = obs - stabilizing_target
+                reward = -(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1))
+                if self.q_net.dynamics_parameters.get('reward_exponential'):
+                    reward = torch.exp(reward)
+        elif self.q_net.dynamics_type == 'CartPoleContinuous':
+            if self.q_net.sin_input is False:
+                reward = torch.exp(-(torch.sum(obs ** 2, dim=1) + torch.sum(0.01 * action ** 2, dim=1)))
+            else:
+                assert obs.shape[1] == 5
+                th = torch.unsqueeze(torch.atan2(obs[:, -2], obs[:, -3]), dim=1)  # -2 is sin, -3 is cos
+                obs = torch.hstack([obs[:, :-3], th, obs[:, -1:]])
+                reward = torch.exp(-(torch.sum(obs ** 2, dim=1) + torch.sum(0.01 * action ** 2, dim=1)))
         return torch.reshape(reward, (reward.shape[0], 1))
