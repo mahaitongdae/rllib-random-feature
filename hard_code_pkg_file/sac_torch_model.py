@@ -586,22 +586,25 @@ class SACTorchRFModel(SACTorchModel):
                 assert obs.shape[1] == 6
                 state_error = obs - stabilizing_target
                 reward = -(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1))
-                if self.q_net.dynamics_parameters.get('reward_exponential'):
-                    reward = torch.exp(reward)
+                # if self.q_net.dynamics_parameters.get('reward_exponential'):
+                #     reward = torch.exp(reward)
             else:
                 assert obs.shape[1] == 7
                 th = torch.unsqueeze(torch.atan2(obs[:, -2], obs[:, -3]), dim=1) # -2 is sin, -3 is cos
                 obs = torch.hstack([obs[:, :4], th, obs[:, -1:]])
                 state_error = obs - stabilizing_target
                 reward = -(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1))
-                if self.q_net.dynamics_parameters.get('reward_exponential'):
-                    reward = torch.exp(reward)
+
         elif self.q_net.dynamics_type == 'CartPoleContinuous':
             if self.q_net.sin_input is False:
-                reward = torch.exp(-(torch.sum(obs ** 2, dim=1) + torch.sum(0.01 * action ** 2, dim=1)))
+                reward = -(torch.sum(obs ** 2, dim=1) + torch.sum(0.01 * action ** 2, dim=1))
             else:
                 assert obs.shape[1] == 5
                 th = torch.unsqueeze(torch.atan2(obs[:, -2], obs[:, -3]), dim=1)  # -2 is sin, -3 is cos
                 obs = torch.hstack([obs[:, :-3], th, obs[:, -1:]])
-                reward = torch.exp(-(torch.sum(obs ** 2, dim=1) + torch.sum(0.01 * action ** 2, dim=1)))
+                reward = -(torch.sum(obs ** 2, dim=1) + torch.sum(0.01 * action ** 2, dim=1))
+
+        # exponent
+        if self.q_net.dynamics_parameters.get('reward_exponential'):
+            reward = torch.exp(reward)
         return torch.reshape(reward, (reward.shape[0], 1))
