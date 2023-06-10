@@ -569,6 +569,22 @@ class SACTorchRFModel(SACTorchModel):
         new_states[:, 4] = theta_dot + dt * thetaacc
         return new_states
 
+    def pendubot_f_6d(self, states, action):
+        dt = 0.05
+        new_states = torch.empty_like(states)
+        cos_theta1, sin_theta1 = states[:, 0], states[:, 1]
+        cos_theta2, sin_theta2 = states[:, 2], states[:, 3]
+        theta1_dot, theta2_dot = states[:, 4], states[:, 5]
+        theta1 = torch.atan2(sin_theta1, cos_theta1)
+        theta2 = torch.atan2(sin_theta2, cos_theta2)
+        new_theta1 = theta1 + dt * theta1_dot
+        new_theta2 = theta2 + dt * theta2_dot
+        new_states[:, 0] = torch.cos(new_theta1)
+        new_states[:, 1] = torch.sin(new_theta1)
+        new_states[:, 2] = torch.cos(new_theta2)
+        new_states[:, 3] = torch.sin(new_theta2)
+        new_states[:, 2] = states[:, 2] + dt * states[:, 3]
+
     def _get_reward(self, obs, action):
         if self.q_net.dynamics_type == 'Pendulum':
             assert obs.shape[1] == 3

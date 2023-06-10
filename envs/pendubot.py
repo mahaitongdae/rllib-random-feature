@@ -76,14 +76,14 @@ class PendubotEnv(gym.Env):
         # self.jacobian = self._jacobian()
 
         # Angle at which to fail the episode
-        self.x_threshold = np.pi / 4
-        self.theta_threshold_radians = 12 * 2 * math.pi / 360
+        self.theta_threshold = np.pi / 4
+        self.theta_dot_threshold = 0.5
 
         # Angle limit set to 2 * theta_threshold_radians so failing observation is still within bounds
         high = np.array([
-            self.x_threshold,
+            2. * np.pi,
             np.finfo(np.float32).max,
-            self.theta_threshold_radians * 2,
+            self.theta_dot_threshold * 2,
             np.finfo(np.float32).max])
 
         self.action_space = spaces.Box(-1.0, 1.0)
@@ -111,19 +111,18 @@ class PendubotEnv(gym.Env):
             self.state = self.np_random.normal(loc=0., scale=0.1, size=(2 * self.n_coords,))
             if self.task == "balance":
                 self.state[0] += np.pi / 2
-        self.steps_beyond_done = None
-        return np.array(self.state)
+        self.steps_beyond_terminated = None
+        return np.array(self.state, dtype=np.float32), {}
 
     def is_done(self):
-        th1, th2 = self.state[:self.n_coords]
+        th1, th2, th1dot, th2dot = self.state
         if self.task == "balance":
-            done =  th1 < np.pi - self.theta_threshold_radians \
-                    or th1 > np.pi + self.theta_threshold_radians \
-                    or th2 < np.pi - self.theta_threshold_radians \
-                    or th2 > np.pi + self.theta_threshold_radians
+            done =  th1 < np.pi / 2 - self.theta_threshold \
+                    or th1 > np.pi / 2 + self.theta_threshold \
+                    or np.abs(th1dot) > self.theta_dot_threshold
         else:
-            bool = False
-        return bool(done)
+            done = False
+        return done
 
     def step(self, action):
         # assert self.action_space.contains(action), "%r (%s) invalid"%(action, type(action))
@@ -135,9 +134,9 @@ class PendubotEnv(gym.Env):
 
         # clip torque, update dynamics
         # u = np.clip(action, -self.force_mag, self.force_mag)
-        u = action
+        u = action * self.force_mag
         self.last_u = u
-        # acc = self._dynamics(anp.array([th1, th2, th1_dot, th2_dot, u]))
+        # acc = self._dynamics(np.array([th1, th2, th1_dot, th2_dot, u]))
 
         # integrate
         # th1_acc, th2_acc = acc
@@ -158,8 +157,8 @@ class PendubotEnv(gym.Env):
         th2 = self._unwrap_angle(th2)
         self.state = np.array([th1, th2, th1_dot, th2_dot])
         
-        # done = self.is_done()
-        terminated = False
+        terminated = self.is_done()
+        # terminated = False
 
         if not terminated:
             reward = - (th1 - np.pi / 2) ** 2 - th1_dot ** 2 - 0.01 * action ** 2
@@ -174,7 +173,7 @@ class PendubotEnv(gym.Env):
             self.steps_beyond_terminated += 1
             reward = -10.0
 
-        return np.array(self.state), reward, terminated, done, {}
+        return np.array(self.state, dtype=np.float32), float(reward), terminated, False, {}
 
     def _dynamics(self, vec):
         """
@@ -188,7 +187,7 @@ class PendubotEnv(gym.Env):
         B = self._B()
         C = self._C(state)
         G = self._G(pos)
-        acc = anp.dot(Minv, anp.dot(B, force) - anp.dot(C, vel.reshape((self.n_coords, 1))) - G)
+        acc = np.dot(Minv, np.dot(B, force) - np.dot(C, vel.reshape((self.n_coords, 1))) - G)
         return np.append(vel, acc.flatten())
 
     def _F(self, vec):
@@ -197,18 +196,18 @@ class PendubotEnv(gym.Env):
         """
         qd = vec[self.n_coords:-1]
         qdd = self._dynamics(vec)
-        return anp.array(list(qd) + list(qdd))
+        return np.array(list(qd) + list(qdd))
 
     def _M(self, pos):
         """
         Inertial Mass matrix
         """
         th1, th2 = pos
-        m11 = self.d1 + self.d2 + 2 * self.d3 * anp.cos(th2)
-        m21 = m12 = self.d2 + self.d3 * anp.cos(th2)
+        m11 = self.d1 + self.d2 + 2 * self.d3 * np.cos(th2)
+        m21 = m12 = self.d2 + self.d3 * np.cos(th2)
         m22 = self.d2
 
-        mass_matrix = anp.array([[m11, m12],
+        mass_matrix = np.array([[m11, m12],
                                [m21, m22]])
         return mass_matrix
 
@@ -217,11 +216,11 @@ class PendubotEnv(gym.Env):
         Coriolis matrix
         """
         th1, th2, th1_dot, th2_dot = state
-        c11 = -1. * self.d3 * anp.sin(th2) * th2_dot
-        c12 = -self.d3 * anp.sin(th2) * (th2_dot + th1_dot)
-        c21 = self.d3 * anp.sin(th2) * th1_dot
+        c11 = -1. * self.d3 * np.sin(th2) * th2_dot
+        c12 = -self.d3 * np.sin(th2) * (th2_dot + th1_dot)
+        c21 = self.d3 * np.sin(th2) * th1_dot
         c22 = 0.0
-        return anp.array([[c11, c12],
+        return np.array([[c11, c12],
                         [c21, c22]])
 
     def _G(self, pos):
@@ -229,16 +228,16 @@ class PendubotEnv(gym.Env):
         Gravitional matrix
         """
         th1, th2 = pos
-        g1 = self.d4 * anp.cos(th1) * self.g + self.d5 * self.g * anp.cos(th1 + th2)
-        g2 = self.d5 * anp.cos(th1 + th2) * self.g
-        return anp.array([[g1],
+        g1 = self.d4 * np.cos(th1) * self.g + self.d5 * self.g * np.cos(th1 + th2)
+        g2 = self.d5 * np.cos(th1 + th2) * self.g
+        return np.array([[g1],
                         [g2]])
 
     def _B(self):
         """
         Force matrix
         """
-        return anp.array([[1], [0]])
+        return np.array([[1], [0]])
 
     # def _jacobian(self):
     #     """
@@ -260,7 +259,7 @@ class PendubotEnv(gym.Env):
         """
         Invert the mass matrix
         """
-        return anp.linalg.inv(self._M(pos))
+        return np.linalg.inv(self._M(pos))
 
     def total_energy(self, state=None):
         if state is None:
@@ -272,15 +271,15 @@ class PendubotEnv(gym.Env):
     def kinetic_energy(self, pos, vel):
         M = self._M(pos)
         vel = vel.reshape((self.n_coords, 1))
-        return float(anp.dot(anp.dot(vel.T, M), vel))
+        return float(np.dot(np.dot(vel.T, M), vel))
 
     def potential_energy(self, pos):
         th1, th2 = pos
-        return self.d4 * self.gravity * anp.sin(th1) + self.d5 * self.gravity * anp.sin(th1 + th2)
+        return self.d4 * self.gravity * np.sin(th1) + self.d5 * self.gravity * np.sin(th1 + th2)
 
     def _unwrap_angle(self, theta):
         sign = (theta >=0)*1 - (theta < 0)*1
-        theta = anp.abs(theta) % (2 * anp.pi)
+        theta = np.abs(theta) % (2 * np.pi)
         return sign*theta
 
     def integrate(self):

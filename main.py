@@ -9,9 +9,12 @@ from ray.tune.registry import register_env
 import os.path as osp
 import sys
 sys.path.append('/home/mht/PycharmProjects/safe-control-gym')
-import safe_control_gym
-from safe_control_gym.utils.configuration import ConfigFactory
-from safe_control_gym.utils.registration import make, register
+try:
+    import safe_control_gym
+    from safe_control_gym.utils.configuration import ConfigFactory
+    from safe_control_gym.utils.registration import make, register
+except:
+    pass
 from gymnasium.wrappers import TransformReward
 import argparse
 import numpy as np
@@ -59,11 +62,34 @@ class TransformTriangleObservationWrapper(gymnasium.ObservationWrapper):
 
         self.observation_space = gymnasium.spaces.Box(low=transformed_low, high=transformed_high, dtype=np.float32)
 
+class TransformDoubleTriangleObservationWrapper(gymnasium.ObservationWrapper):
+
+    def __init__(self, env):
+        super().__init__(env)
+        # low = np.array([
+        #     -env.x_threshold, -np.finfo(np.float32).max,
+        #     env.GROUND_PLANE_Z, -np.finfo(np.float32).max,
+        #     -1., -1., -np.finfo(np.float32).max
+        # ])
+        # high = np.array([
+        #     env.x_threshold, np.finfo(np.float32).max,
+        #     env.z_threshold, np.finfo(np.float32).max,
+        #     1., 1., np.finfo(np.float32).max
+        # ])
+        low = env.observation_space.low
+        high = env.observation_space.high
+        transformed_low = np.hstack([[-1., -1., -1., -1.,], low[-2:]])
+        transformed_high = np.hstack([[1., 1., 1., 1., ], high[-2:]])
+
+        self.observation_space = gymnasium.spaces.Box(low=transformed_low, high=transformed_high, dtype=np.float32)
+
     def observation(self, observation):
-        theta = observation[-2]
-        sin_cos_theta = np.array([np.cos(theta), np.sin(theta)])
-        theta_dot = observation[-1:]
-        return np.hstack([observation[:-2], sin_cos_theta, theta_dot])
+        theta1 = observation[0]
+        theta2 = observation[1]
+        sin_cos_theta1 = np.array([np.cos(theta1), np.sin(theta1)])
+        sin_cos_theta2 = np.array([np.cos(theta2), np.sin(theta2)])
+        theta_dot = observation[-2:]
+        return np.hstack([sin_cos_theta1, sin_cos_theta2, theta_dot])
 
 def env_creator(env_config):
     CONFIG_FACTORY = ConfigFactory()
@@ -86,6 +112,19 @@ def env_creator_cartpole(env_config):
     env = TransformReward(env, lambda r: np.exp(r))
     if ENV_CONFIG.get('sin_input'):
         return TransformTriangleObservationWrapper(env)
+    else:
+        return env
+
+def env_creator_pendubot(env_config):
+    from gymnasium.envs.registration import register
+    reward_scale_pendubot = 10.
+    register(id='Pendubot-v0',
+             entry_point='envs:PendubotEnv',
+             max_episode_steps=200)
+    env = gymnasium.make('Pendubot-v0') #, render_mode='human'
+    env = TransformReward(env, lambda r: np.exp(reward_scale_pendubot * r))
+    if ENV_CONFIG.get('sin_input'):
+        return TransformDoubleTriangleObservationWrapper(env)
     else:
         return env
 
@@ -135,18 +174,18 @@ def train_rfsac(args):
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=2048, type=int)
-    parser.add_argument("--env_id", default='CartPoleContinuous-v0', type=str)
-    parser.add_argument("--algo", default='RFSAC', type=str)
-    parser.add_argument("--reward_exp", default=True, type=str)
-    parser.add_argument("--eval", default=False, type=bool)
-    args = parser.parse_args()
-    train_rfsac(args)
-    # env = env_creator_cartpole(ENV_CONFIG)
-    # print(env.reset())
-    # print(env.observation_space)
-    # print(env.action_space)
-    # action = env.action_space.sample()
-    # print(env.step(action))
-    # print(env.step(action))
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--random_feature_dim", default=2048, type=int)
+    # parser.add_argument("--env_id", default='CartPoleContinuous-v0', type=str)
+    # parser.add_argument("--algo", default='RFSAC', type=str)
+    # parser.add_argument("--reward_exp", default=True, type=str)
+    # parser.add_argument("--eval", default=False, type=bool)
+    # args = parser.parse_args()
+    # train_rfsac(args)
+    env = env_creator_pendubot(ENV_CONFIG)
+    print(env.reset())
+    print(env.observation_space)
+    print(env.action_space)
+    action = env.action_space.sample()
+    print(env.step(action))
+    print(env.step(action))
