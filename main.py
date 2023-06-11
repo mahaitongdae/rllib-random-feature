@@ -37,7 +37,7 @@ RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 8192,
 
 RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
 
-ENV_CONFIG = {'sin_input': False}
+ENV_CONFIG = {'sin_input': True}
 
 RF_MODEL_DEFAULTS.update(ENV_CONFIG)
 
@@ -135,6 +135,7 @@ def train_rfsac(args):
 
     register_env('Quadrotor2D-v1', env_creator)
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
+    register_env('Pendubot-v0', env_creator_pendubot)
 
     if args.algo == 'RFSAC':
         config = RFSACConfig().environment(env=args.env_id)\
@@ -174,18 +175,18 @@ def train_rfsac(args):
 
 if __name__ == "__main__":
 
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--random_feature_dim", default=2048, type=int)
-    # parser.add_argument("--env_id", default='CartPoleContinuous-v0', type=str)
-    # parser.add_argument("--algo", default='RFSAC', type=str)
-    # parser.add_argument("--reward_exp", default=True, type=str)
-    # parser.add_argument("--eval", default=False, type=bool)
-    # args = parser.parse_args()
-    # train_rfsac(args)
-    env = env_creator_pendubot(ENV_CONFIG)
-    print(env.reset())
-    print(env.observation_space)
-    print(env.action_space)
-    action = env.action_space.sample()
-    print(env.step(action))
-    print(env.step(action))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--random_feature_dim", default=2048, type=int)
+    parser.add_argument("--env_id", default='Pendubot-v0', type=str)
+    parser.add_argument("--algo", default='RFSAC', type=str)
+    parser.add_argument("--reward_exp", default=True, type=str)
+    parser.add_argument("--eval", default=False, type=bool)
+    args = parser.parse_args()
+    train_rfsac(args)
+    # env = env_creator_pendubot(ENV_CONFIG)
+    # print(env.reset())
+    # print(env.observation_space)
+    # print(env.action_space)
+    # action = env.action_space.sample()
+    # print(env.step(action))
+    # print(env.step(action))

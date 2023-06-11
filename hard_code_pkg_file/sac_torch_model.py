@@ -434,6 +434,11 @@ class SACTorchRFModel(SACTorchModel):
                     obs_tp1 = self.cartpole_f_4d(model_out, actions)
                 else:
                     obs_tp1 = self.cartpole_f_5d(model_out, actions)
+            elif self.q_net.dynamics_type == 'Pendubot':
+                if self.q_net.sin_input:
+                    obs_tp1 = self.pendubot_f_6d(model_out, actions)
+                else:
+                    raise NotImplementedError
             input_dict = {"obs": obs_tp1}
         # Discrete case -> return q-vals for all actions.
         else:
@@ -570,6 +575,7 @@ class SACTorchRFModel(SACTorchModel):
         return new_states
 
     def pendubot_f_6d(self, states, action):
+        import torch
         dt = 0.05
         new_states = torch.empty_like(states)
         cos_theta1, sin_theta1 = states[:, 0], states[:, 1]
@@ -583,7 +589,51 @@ class SACTorchRFModel(SACTorchModel):
         new_states[:, 1] = torch.sin(new_theta1)
         new_states[:, 2] = torch.cos(new_theta2)
         new_states[:, 3] = torch.sin(new_theta2)
-        new_states[:, 2] = states[:, 2] + dt * states[:, 3]
+
+        d1 = 0.089252
+        d2 = 0.027630
+        d3 = 0.023502
+        d4 = 0.011204
+        d5 = 0.002938
+        g = 9.81
+
+        m11 = d1 + d2 + 2 * d3 * torch.cos(theta2)
+        m21 = d2 + d3 * torch.cos(theta2)
+        # m12 = d2 + d3 * torch.cos(theta2)
+        m22 = d2
+
+        mass_matrix = torch.empty((states.shape[0], 2, 2))
+        mass_matrix[:, 0, 0] = m11
+        mass_matrix[:, 0, 1] = m21
+        mass_matrix[:, 1, 0] = m21
+        mass_matrix[:, 1, 1] = m22
+
+        # mass_matrix = np.array([[m11, m12],
+        #                         [m21, m22]])
+
+        c_matrix = torch.empty((states.shape[0], 2, 2))
+        c11 = -1. * d3 * np.sin(theta2) * theta2_dot
+        c12 = -d3 * np.sin(theta2) * (theta2_dot + theta1_dot)
+        c21 = d3 * np.sin(theta2) * theta1_dot
+        c22 = torch.zeros_like(theta1)
+        c_matrix[:, 0, 0] = c11
+        c_matrix[:, 0, 1] = c12
+        c_matrix[:, 1, 0] = c21
+        c_matrix[:, 1, 1] = c22
+
+        g1 = d4 * torch.cos(theta2) * g + d5 * g * torch.cos(theta1 + theta2)
+        g2 = d5 * torch.cos(theta1 + theta2) * g
+
+        g_vec = torch.empty((states.shape[0], 2, 1))
+        g_vec[:, 0, 0] = g1
+        g_vec[:, 1, 0] = g2
+
+        action = torch.hstack([action, torch.zeros_like(action)])[:, :, np.newaxis]
+        acc = torch.linalg.solve(mass_matrix, action - torch.matmul(c_matrix, states[:, -2:][:, :, np.newaxis]) - g_vec)
+        new_states[:, 4] = theta1_dot + dt * torch.squeeze(acc[:, 0])
+        new_states[:, 5] = theta2_dot + dt * torch.squeeze(acc[:, 1])
+
+        return new_states
 
     def _get_reward(self, obs, action):
         if self.q_net.dynamics_type == 'Pendulum':
@@ -593,6 +643,7 @@ class SACTorchRFModel(SACTorchModel):
             action = torch.reshape(action, (action.shape[0],))
             th = angle_normalize(th)
             reward = -(th ** 2 + 0.1 * thdot ** 2 + 0.01 * action ** 2)
+
         elif self.q_net.dynamics_type == 'Quadrotor2D':
             if isinstance(self.q_net.dynamics_parameters.get('stabilizing_target'), list):
                 stabilizing_target = torch.tensor(self.q_net.dynamics_parameters.get('stabilizing_target'))
@@ -620,7 +671,117 @@ class SACTorchRFModel(SACTorchModel):
                 obs = torch.hstack([obs[:, :-3], th, obs[:, -1:]])
                 reward = -(torch.sum(obs ** 2, dim=1) + torch.sum(0.01 * action ** 2, dim=1))
 
+        elif self.q_net.dynamics_type == 'Pendubot':
+            if self.q_net.sin_input:
+                assert obs.shape[1] == 6
+                th1 = torch.atan2(obs[:, 1], obs[:, 0])
+                # th2 = torch.unsqueeze(torch.atan2(obs[:, 3], obs[:, 2]), dim=1)
+                th1dot = obs[:, 4]
+                reward = -1. * 10 * ((th1 - np.pi / 2) ** 2 + th1dot ** 2 + 0.01 * torch.squeeze(action) ** 2)
+
         # exponent
         if self.q_net.dynamics_parameters.get('reward_exponential'):
             reward = torch.exp(reward)
         return torch.reshape(reward, (reward.shape[0], 1))
+
+if __name__ == '__main__':
+    from ray.rllib.models.catalog import ModelCatalog, MODEL_DEFAULTS
+    from ray.rllib.algorithms.sac import SACConfig
+    from ray.rllib.policy.sample_batch import SampleBatch
+
+    RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 256,
+                                          'sigma': 0,
+                                          'learn_rf': False,
+                                          'dynamics_type': 'Pendubot',
+                                          'dynamics_parameters': {
+                                              'stabilizing_target': torch.tensor([0.0, 0.0, 0.5, 0.0, 0.0, 0.0]),
+                                              },
+                                          'sin_input': True}
+
+    RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
+    obs_space = Box(-1.0, 1.0, (6,))
+    action_space = Box(-1.0, 1.0, (1,))
+
+
+    # Run in eager mode for value checking and debugging.
+    # tf1.enable_eager_execution()
+
+    # __sphinx_doc_model_construct_1_begin__
+    rf_model = ModelCatalog.get_model_v2(
+        obs_space=obs_space,
+        action_space=action_space,
+        num_outputs=1,
+        model_config=MODEL_DEFAULTS,
+        framework="torch",
+        # Providing the `model_interface` arg will make the factory
+        # wrap the chosen default model with our new model API class
+        # (DuelingQModel). This way, both `forward` and `get_q_values`
+        # are available in the returned class.
+        model_interface=SACTorchRFModel,
+        name="rf_q_model",
+        policy_model_config=SACConfig().policy_model_config,
+        q_model_config=RF_MODEL_DEFAULTS
+    )
+    # __sphinx_doc_model_construct_1_end__
+
+    batch_size = 10
+    input_ = np.array([obs_space.sample() for _ in range(batch_size)])
+    actions_ = np.array([action_space.sample() for _ in range(batch_size)])
+    # Note that for PyTorch, you will have to provide torch tensors here.
+    # if args.framework == "torch":
+    input_ = torch.from_numpy(input_)
+    actions = torch.from_numpy(actions_)
+
+    input_dict = SampleBatch(obs=input_, _is_training=True)
+    # actions = SampleBatch(action=actions_, _is_training=False)
+    # out, state_outs = rf_model(input_dict=input_dict)
+    # print(out, state_outs)
+    # assert out.shape == (10, 256)
+    # Pass `out` into `get_q_values`
+    q_values, _ = rf_model.get_q_values(input_dict, actions)
+    action, _ = rf_model.get_action_model_outputs(input_dict)
+    print(action)
+    print(q_values)
+    # assert q_values.shape == (10, action_space.n)
+
+    # # Test API wrapper for single value Q-head from obs/action input.
+    #
+    # obs_space = Box(-1.0, 1.0, (3,))
+    # action_space = Box(-1.0, -1.0, (2,))
+    #
+    # # __sphinx_doc_model_construct_2_begin__
+    # my_cont_action_q_model = ModelCatalog.get_model_v2(
+    #     obs_space=obs_space,
+    #     action_space=action_space,
+    #     num_outputs=2,
+    #     model_config=MODEL_DEFAULTS,
+    #     framework='torch',
+    #     # Providing the `model_interface` arg will make the factory
+    #     # wrap the chosen default model with our new model API class
+    #     # (DuelingQModel). This way, both `forward` and `get_q_values`
+    #     # are available in the returned class.
+    #     model_interface=ContActionQModel
+    #     if args.framework != "torch"
+    #     else TorchContActionQModel,
+    #     name="cont_action_q_model",
+    # )
+    # # __sphinx_doc_model_construct_2_end__
+    #
+    # batch_size = 10
+    # input_ = np.array([obs_space.sample() for _ in range(batch_size)])
+    #
+    # # Note that for PyTorch, you will have to provide torch tensors here.
+    # if args.framework == "torch":
+    #     input_ = torch.from_numpy(input_)
+    #
+    # input_dict = SampleBatch(obs=input_, _is_training=False)
+    # # Note that for PyTorch, you will have to provide torch tensors here.
+    # out, state_outs = my_cont_action_q_model(input_dict=input_dict)
+    # assert out.shape == (10, 256)
+    # # Pass `out` and an action into `my_cont_action_q_model`
+    # action = np.array([action_space.sample() for _ in range(batch_size)])
+    # if args.framework == "torch":
+    #     action = torch.from_numpy(action)
+    #
+    # q_value = my_cont_action_q_model.get_single_q_value(out, action)
+    # assert q_value.shape == (10, 1)
