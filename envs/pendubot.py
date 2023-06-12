@@ -27,15 +27,20 @@ class PendubotEnv(gym.Env):
     screen = None
     clock = None
     isopen = True
-    render_mode = 'human'
 
-    def __init__(self, task="balance", initial_state=None):
+
+    def __init__(self, task="balance", initial_state=None, noisy=False, noisy_scale=1., eval=False, render_mode: Optional[str] = None):
         # set task
         self.task = task
 
         self.initial_state = initial_state
 
         self.last_u = None
+
+        self.noisy = noisy
+        self.noisy_scale = noisy_scale
+        self.render_mode = render_mode
+        self.eval = eval
         
         # gravity
         self.gravity = self.g = 9.8
@@ -76,8 +81,8 @@ class PendubotEnv(gym.Env):
         # self.jacobian = self._jacobian()
 
         # Angle at which to fail the episode
-        self.theta_threshold = np.pi / 4
-        self.theta_dot_threshold = 0.5
+        self.theta_threshold = np.pi / 2
+        self.theta_dot_threshold = 3.
 
         # Angle limit set to 2 * theta_threshold_radians so failing observation is still within bounds
         high = np.array([
@@ -112,14 +117,18 @@ class PendubotEnv(gym.Env):
             if self.task == "balance":
                 self.state[0] += np.pi / 2
         self.steps_beyond_terminated = None
+
+        if self.render_mode == 'human':
+            self.render()
+
         return np.array(self.state, dtype=np.float32), {}
 
     def is_done(self):
         th1, th2, th1dot, th2dot = self.state
         if self.task == "balance":
             done =  th1 < np.pi / 2 - self.theta_threshold \
-                    or th1 > np.pi / 2 + self.theta_threshold \
-                    or np.abs(th1dot) > self.theta_dot_threshold
+                    or th1 > np.pi / 2 + self.theta_threshold # \
+                    # or np.abs(th1dot) > self.theta_dot_threshold
         else:
             done = False
         return done
@@ -134,6 +143,8 @@ class PendubotEnv(gym.Env):
 
         # clip torque, update dynamics
         # u = np.clip(action, -self.force_mag, self.force_mag)
+        if isinstance(action, list) or isinstance(action, np.ndarray):
+            action = action[0]
         u = action * self.force_mag
         self.last_u = u
         # acc = self._dynamics(np.array([th1, th2, th1_dot, th2_dot, u]))
@@ -156,8 +167,11 @@ class PendubotEnv(gym.Env):
         th1 = self._unwrap_angle(th1)
         th2 = self._unwrap_angle(th2)
         self.state = np.array([th1, th2, th1_dot, th2_dot])
+
+        if self.noisy:
+            self.state = self.state + np.random.normal(loc=0., scale=self.noisy_scale * 0.05, size=(4,))
         
-        terminated = self.is_done()
+        terminated = False if self.eval else self.is_done()
         # terminated = False
 
         if not terminated:
@@ -172,6 +186,9 @@ class PendubotEnv(gym.Env):
                 logger.warn("You are calling 'step()' even though this environment has already returned done = True. You should always call 'reset()' once you receive 'done = True' -- any further steps are undefined behavior.")
             self.steps_beyond_terminated += 1
             reward = -10.0
+
+        if self.render_mode == 'human':
+            self.render()
 
         return np.array(self.state, dtype=np.float32), float(reward), terminated, False, {}
 
@@ -426,17 +443,17 @@ def energy_based_controller(env, kd = 1., kp = 1., ke = 1.5):
 
 
 def main():
-    env = PendubotEnv()
+    env = PendubotEnv(render_mode='human')
     env.reset()
     print(env.state)
     rewards = 0.
     for i in range(200):
         action = energy_based_controller(env)
         # print(action)
-        _, reward, _, _ = env.step(action)
+        _, reward, _, _, _ = env.step(action)
 
         rewards += reward
-        env.render()
+        # env.render()
     print(rewards)
 
 if __name__ == '__main__':

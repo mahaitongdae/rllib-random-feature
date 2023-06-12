@@ -121,7 +121,7 @@ def env_creator_pendubot(env_config):
     register(id='Pendubot-v0',
              entry_point='envs:PendubotEnv',
              max_episode_steps=200)
-    env = gymnasium.make('Pendubot-v0') #, render_mode='human'
+    env = gymnasium.make('Pendubot-v0', noisy=True, noisy_scale=0.5) #, render_mode='human'
     env = TransformReward(env, lambda r: np.exp(reward_scale_pendubot * r))
     if ENV_CONFIG.get('sin_input'):
         return TransformDoubleTriangleObservationWrapper(env)
@@ -161,9 +161,9 @@ def train_rfsac(args):
         json.dump(RF_MODEL_DEFAULTS, fp)
 
     # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3/checkpoint_000451')
-    # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-51-176qhk6ywr/checkpoint_000451')
+    # algo.restore('/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-11_20-42-05vszbe_mr/checkpoint_000451')
 
-    train_iter = 1 if args.eval else 500
+    train_iter = 1 if args.eval else 550
     for i in range(train_iter):
         result = algo.train()
         print(pretty_print(result))
@@ -176,7 +176,7 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=2048, type=int)
+    parser.add_argument("--random_feature_dim", default=32768, type=int)
     parser.add_argument("--env_id", default='Pendubot-v0', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
     parser.add_argument("--reward_exp", default=True, type=str)

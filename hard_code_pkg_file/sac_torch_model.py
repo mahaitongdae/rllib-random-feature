@@ -406,10 +406,10 @@ class SACTorchRFModel(SACTorchModel):
             assert isinstance(action_space, Simplex)
             q_outs = 1
 
-        self.q_net = RandomFeatureNetwork(obs_space, action_space, q_outs, q_model_config, 'q1')
+        self.q_net = RandomFeatureNetwork(obs_space, action_space, q_outs, q_model_config, 'q')
 
         if twin_q:
-            self.twin_q_net = RandomFeatureNetwork(obs_space, action_space, q_outs, q_model_config, 'q1')
+            self.twin_q_net = RandomFeatureNetwork(obs_space, action_space, q_outs, q_model_config, 'twin_q')
 
     def _get_q_value(self, model_out, actions, net):
         # Model outs may come as original Tuple observations, concat them

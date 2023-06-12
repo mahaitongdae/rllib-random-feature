@@ -16,6 +16,7 @@ from gymnasium.wrappers import TransformReward
 import argparse
 import numpy as np
 import json
+from main import TransformTriangleObservationWrapper, TransformDoubleTriangleObservationWrapper
 
 from copy import deepcopy
 
@@ -37,33 +38,6 @@ RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
 ENV_CONFIG = {'sin_input': True}
 
 RF_MODEL_DEFAULTS.update(ENV_CONFIG)
-
-class TransformTriangleObservationWrapper(gymnasium.ObservationWrapper):
-
-    def __init__(self, env):
-        super().__init__(env)
-        # low = np.array([
-        #     -env.x_threshold, -np.finfo(np.float32).max,
-        #     env.GROUND_PLANE_Z, -np.finfo(np.float32).max,
-        #     -1., -1., -np.finfo(np.float32).max
-        # ])
-        # high = np.array([
-        #     env.x_threshold, np.finfo(np.float32).max,
-        #     env.z_threshold, np.finfo(np.float32).max,
-        #     1., 1., np.finfo(np.float32).max
-        # ])
-        low = env.observation_space.low
-        high = env.observation_space.high
-        transformed_low = np.hstack([low[:-2], [-1., -1.,], low[-1:]])
-        transformed_high = np.hstack([high[:-2], [1., 1.,], high[-1:]])
-
-        self.observation_space = gymnasium.spaces.Box(low=transformed_low, high=transformed_high, dtype=np.float32)
-
-    def observation(self, observation):
-        theta = observation[-2]
-        sin_cos_theta = np.array([np.cos(theta), np.sin(theta)])
-        theta_dot = observation[-1:]
-        return np.hstack([observation[:-2], sin_cos_theta, theta_dot])
 
 def env_creator(env_config):
     CONFIG_FACTORY = ConfigFactory()
@@ -89,6 +63,19 @@ def env_creator_cartpole(env_config):
     else:
         return env
 
+def env_creator_pendubot(env_config):
+    from gymnasium.envs.registration import register
+    reward_scale_pendubot = 10.
+    register(id='Pendubot-v0',
+             entry_point='envs:PendubotEnv',
+             max_episode_steps=200)
+    env = gymnasium.make('Pendubot-v0', noisy=True, render_mode='human', noisy_scale=0.5, eval=True) # render_mode='human',
+    env = TransformReward(env, lambda r: np.exp(reward_scale_pendubot * r))
+    if ENV_CONFIG.get('sin_input'):
+        return TransformDoubleTriangleObservationWrapper(env)
+    else:
+        return env
+
 def train_rfsac(args):
     RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
     RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
@@ -96,14 +83,15 @@ def train_rfsac(args):
 
     register_env('Quadrotor2D-v1', env_creator)
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
+    register_env('Pendubot-v0', env_creator_pendubot)
 
     if args.algo == 'RFSAC':
         config = RFSACConfig().environment(env=args.env_id)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=4)
+            .framework("torch") .training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=0)
 
     elif args.algo == 'SAC':
         config = SACConfig().environment(env=args.env_id)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=4)
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1)
 
     if args.eval:
         config = config.evaluation(
@@ -121,7 +109,8 @@ def train_rfsac(args):
         json.dump(RF_MODEL_DEFAULTS, fp)
 
     # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3/checkpoint_000451')
-    algo.restore('/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-51-17i_cw3m6f/checkpoint_000451')
+    # algo.restore('/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-51-17i_cw3m6f/checkpoint_000451')
+    algo.restore('/home/mht/ray_results/SAC_Pendubot-v0_2023-06-11_18-53-30hcp3by5w/checkpoint_000951')
 
     train_iter = 1 if args.eval else 500
     for i in range(train_iter):
@@ -136,8 +125,8 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=2048, type=int)
-    parser.add_argument("--env_id", default='CartPoleContinuous-v0', type=str)
+    parser.add_argument("--random_feature_dim", default=32768, type=int)
+    parser.add_argument("--env_id", default='Pendubot-v0', type=str)
     parser.add_argument("--algo", default='SAC', type=str)
     parser.add_argument("--reward_exp", default=True, type=str)
     parser.add_argument("--eval", default=True, type=bool)
