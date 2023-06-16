@@ -13,6 +13,7 @@ from ray.rllib.utils.typing import ModelConfigDict, TensorType, TensorStructType
 
 torch, nn = try_import_torch()
 
+
 class RandomFeatureNetwork(TorchModelV2, nn.Module):
     """
     Random feature network.
@@ -89,17 +90,17 @@ class SACTorchModel(TorchModelV2, nn.Module):
     """
 
     def __init__(
-        self,
-        obs_space: gym.spaces.Space,
-        action_space: gym.spaces.Space,
-        num_outputs: Optional[int],
-        model_config: ModelConfigDict,
-        name: str,
-        policy_model_config: ModelConfigDict = None,
-        q_model_config: ModelConfigDict = None,
-        twin_q: bool = False,
-        initial_alpha: float = 1.0,
-        target_entropy: Optional[float] = None,
+            self,
+            obs_space: gym.spaces.Space,
+            action_space: gym.spaces.Space,
+            num_outputs: Optional[int],
+            model_config: ModelConfigDict,
+            name: str,
+            policy_model_config: ModelConfigDict = None,
+            q_model_config: ModelConfigDict = None,
+            twin_q: bool = False,
+            initial_alpha: float = 1.0,
+            target_entropy: Optional[float] = None,
     ):
         """Initializes a SACTorchModel instance.
         7
@@ -180,10 +181,10 @@ class SACTorchModel(TorchModelV2, nn.Module):
 
     @override(TorchModelV2)
     def forward(
-        self,
-        input_dict: Dict[str, TensorType],
-        state: List[TensorType],
-        seq_lens: TensorType,
+            self,
+            input_dict: Dict[str, TensorType],
+            state: List[TensorType],
+            seq_lens: TensorType,
     ) -> (TensorType, List[TensorType]):
         """The common (Q-net and policy-net) forward pass.
 
@@ -251,7 +252,7 @@ class SACTorchModel(TorchModelV2, nn.Module):
         return model
 
     def get_q_values(
-        self, model_out: TensorType, actions: Optional[TensorType] = None
+            self, model_out: TensorType, actions: Optional[TensorType] = None
     ) -> TensorType:
         """Returns Q-values, given the output of self.__call__().
 
@@ -271,7 +272,7 @@ class SACTorchModel(TorchModelV2, nn.Module):
         return self._get_q_value(model_out, actions, self.q_net)
 
     def get_twin_q_values(
-        self, model_out: TensorType, actions: Optional[TensorType] = None
+            self, model_out: TensorType, actions: Optional[TensorType] = None
     ) -> TensorType:
         """Same as get_q_values but using the twin Q net.
 
@@ -316,10 +317,10 @@ class SACTorchModel(TorchModelV2, nn.Module):
         return net(input_dict, [], None)
 
     def get_action_model_outputs(
-        self,
-        model_out: TensorType,
-        state_in: List[TensorType] = None,
-        seq_lens: TensorType = None,
+            self,
+            model_out: TensorType,
+            state_in: List[TensorType] = None,
+            seq_lens: TensorType = None,
     ) -> (TensorType, List[TensorType]):
         """Returns distribution inputs and states given the output of
         policy.model().
@@ -378,8 +379,8 @@ class SACTorchModel(TorchModelV2, nn.Module):
         return self.q_net.variables() + (
             self.twin_q_net.variables() if self.twin_q_net else []
         )
-    
-    
+
+
 class SACTorchRFModel(SACTorchModel):
 
     def __init__(
@@ -482,9 +483,11 @@ class SACTorchRFModel(SACTorchModel):
     def quadrotor_f_star_7d(self, states, action, m=0.027, g=10.0, Iyy=1.4e-5, dt=0.0167):
         new_states = torch.empty_like(states)
         new_states[:, 0] = states[:, 0] + dt * states[:, 1]
-        new_states[:, 1] = states[:, 1] + dt * (1 / m * torch.multiply(torch.sum(action, dim=1), torch.sin(states[:, 4])))
+        new_states[:, 1] = states[:, 1] + dt * (
+                    1 / m * torch.multiply(torch.sum(action, dim=1), torch.sin(states[:, 4])))
         new_states[:, 2] = states[:, 2] + dt * states[:, 3]
-        new_states[:, 3] = states[:, 3] + dt * (1 / m * torch.multiply(torch.sum(action, dim=1), torch.cos(states[:, 4])) - g)
+        new_states[:, 3] = states[:, 3] + dt * (
+                    1 / m * torch.multiply(torch.sum(action, dim=1), torch.cos(states[:, 4])) - g)
         theta = torch.atan2(states[:, -2], states[:, -3])
         new_theta = theta + dt * states[:, 5]
         new_states[:, 4] = torch.cos(new_theta)
@@ -521,8 +524,8 @@ class SACTorchRFModel(SACTorchModel):
         # For the interested reader:
         # https://coneural.org/florian/papers/05_cart_pole.pdf
         temp = 1. / total_mass * (
-                       force + polemass_length * theta_dot ** 2 * sintheta
-               )
+                force + polemass_length * theta_dot ** 2 * sintheta
+        )
         thetaacc = (gravity * sintheta - costheta * temp) / (
                 length * (4.0 / 3.0 - masspole * costheta ** 2 / total_mass)
         )
@@ -557,15 +560,13 @@ class SACTorchRFModel(SACTorchModel):
         # new_states[:, 2] = states[:, 2] + dt * states[:, 3]
         # theta = states[:, 2]
 
-
-
         force = torch.squeeze(10. * action)
 
         # For the interested reader:
         # https://coneural.org/florian/papers/05_cart_pole.pdf
         temp = 1. / total_mass * (
-                       force + polemass_length * theta_dot ** 2 * sintheta
-               )
+                force + polemass_length * theta_dot ** 2 * sintheta
+        )
         thetaacc = (gravity * sintheta - costheta * temp) / (
                 length * (4.0 / 3.0 - masspole * costheta ** 2 / total_mass)
         )
@@ -597,6 +598,9 @@ class SACTorchRFModel(SACTorchModel):
         d5 = 0.002938
         g = 9.81
 
+        self.d4 = d4
+        self.d5 = d5
+
         m11 = d1 + d2 + 2 * d3 * torch.cos(theta2)
         m21 = d2 + d3 * torch.cos(theta2)
         # m12 = d2 + d3 * torch.cos(theta2)
@@ -607,6 +611,8 @@ class SACTorchRFModel(SACTorchModel):
         mass_matrix[:, 0, 1] = m21
         mass_matrix[:, 1, 0] = m21
         mass_matrix[:, 1, 1] = m22
+
+        self.mass_matrix = mass_matrix
 
         # mass_matrix = np.array([[m11, m12],
         #                         [m21, m22]])
@@ -635,6 +641,21 @@ class SACTorchRFModel(SACTorchModel):
 
         return new_states
 
+    def _get_energy_error(self, obs, action, ke=1.5):
+        assert self.q_net.dynamics_type == 'Pendubot'
+        dot_theta = obs[:, -2:][:, :, np.newaxis]  # batch, 2, 1
+        dot_theta_t = obs[:, -2:][:, np.newaxis]  # batch, 1, 2
+        cos_theta1, sin_theta1 = obs[:, 0], obs[:, 1]
+        cos_theta2, sin_theta2 = obs[:, 2], obs[:, 3]
+        sin_theta1_plus_theta2 = torch.multiply(sin_theta1, cos_theta2) + torch.multiply(cos_theta1, sin_theta2)
+
+        kinetic_energy = torch.squeeze(torch.matmul(torch.matmul(dot_theta_t, self.mass_matrix), dot_theta))
+        potential_energy = self.d4 * 9.81 * sin_theta1 + self.d5 * 9.81 * sin_theta1_plus_theta2
+        energy_on_top = (self.d4 + self.d5) * 9.81
+        energy_error = kinetic_energy + potential_energy - energy_on_top
+
+        return ke * energy_error ** 2
+
     def _get_reward(self, obs, action):
         if self.q_net.dynamics_type == 'Pendulum':
             assert obs.shape[1] == 3
@@ -657,7 +678,7 @@ class SACTorchRFModel(SACTorchModel):
                 #     reward = torch.exp(reward)
             else:
                 assert obs.shape[1] == 7
-                th = torch.unsqueeze(torch.atan2(obs[:, -2], obs[:, -3]), dim=1) # -2 is sin, -3 is cos
+                th = torch.unsqueeze(torch.atan2(obs[:, -2], obs[:, -3]), dim=1)  # -2 is sin, -3 is cos
                 obs = torch.hstack([obs[:, :4], th, obs[:, -1:]])
                 state_error = obs - stabilizing_target
                 reward = -(torch.sum(1. * state_error ** 2, dim=1) + torch.sum(0.0001 * action ** 2, dim=1))
@@ -674,15 +695,46 @@ class SACTorchRFModel(SACTorchModel):
         elif self.q_net.dynamics_type == 'Pendubot':
             if self.q_net.sin_input:
                 assert obs.shape[1] == 6
-                th1 = torch.atan2(obs[:, 1], obs[:, 0])
-                # th2 = torch.unsqueeze(torch.atan2(obs[:, 3], obs[:, 2]), dim=1)
                 th1dot = obs[:, 4]
-                reward = -1. * 10 * ((th1 - np.pi / 2) ** 2 + th1dot ** 2 + 0.01 * torch.squeeze(action) ** 2)
-
+                th2dot = obs[:, 5]
+                if self.q_net.dynamics_parameters.get('reward_type') == 'lqr':
+                    if self.q_net.dynamics_parameters.get('theta_cal') == 'arctan':
+                        th1 = torch.atan2(obs[:, 1], obs[:, 0])
+                        th2 = torch.atan2(obs[:, 3], obs[:, 2])
+                        reward = -1. * ((th1 - np.pi / 2) ** 2 + th1dot ** 2 +
+                                        0.01 * th2 ** 2 + 0.01 * th2dot ** 2 + 0.01 * torch.squeeze(action) ** 2)
+                    elif self.q_net.dynamics_parameters.get('theta_cal') == 'sin_cos':
+                        cos_th1 = obs[:, 0]
+                        sin_th1 = obs[:, 1]
+                        cos_th2 = obs[:, 2]
+                        sin_th2 = obs[:, 3]
+                        reward = -1. * ((cos_th1) ** 2 + (sin_th1 - 1.) ** 2 + th1dot ** 2 +
+                                        0.01 * (sin_th2) ** 2 + 0.01 * (cos_th2 - 1.) ** 2 +
+                                        0.01 * th2dot ** 2 + 0.01 * torch.squeeze(action) ** 2)
+                    else:
+                        raise NotImplementedError
+                elif self.q_net.dynamics_parameters.get('reward_type') == 'energy':
+                    if self.q_net.dynamics_parameters.get('theta_cal') == 'arctan':
+                        th1 = torch.atan2(obs[:, 1], obs[:, 0])
+                        th2 = torch.atan2(obs[:, 3], obs[:, 2])
+                        reward = -1. * ((th1 - np.pi / 2) ** 2 + th1dot ** 2 + self._get_energy_error(obs, action))
+                    elif self.q_net.dynamics_parameters.get('theta_cal') == 'sin_cos':
+                        cos_th1 = obs[:, 0]
+                        sin_th1 = obs[:, 1]
+                        cos_th2 = obs[:, 2]
+                        sin_th2 = obs[:, 3]
+                        reward = -1. * ((cos_th1) ** 2 + (sin_th1 - 1.) ** 2 + th1dot ** 2 + self._get_energy_error(obs, action))
+                    else:
+                        raise NotImplementedError
+                else:
+                    raise NotImplementedError
+                reward_scale = self.q_net.dynamics_parameters.get('reward_scale')
+                reward = reward_scale * reward
         # exponent
         if self.q_net.dynamics_parameters.get('reward_exponential'):
             reward = torch.exp(reward)
         return torch.reshape(reward, (reward.shape[0], 1))
+
 
 if __name__ == '__main__':
     from ray.rllib.models.catalog import ModelCatalog, MODEL_DEFAULTS
@@ -695,13 +747,15 @@ if __name__ == '__main__':
                                           'dynamics_type': 'Pendubot',
                                           'dynamics_parameters': {
                                               'stabilizing_target': torch.tensor([0.0, 0.0, 0.5, 0.0, 0.0, 0.0]),
-                                              },
+                                              'reward_scale': 10.,
+                                              'reward_exponential': False,
+                                              'reward_type': 'lqr',
+                                          },
                                           'sin_input': True}
 
     RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
     obs_space = Box(-1.0, 1.0, (6,))
     action_space = Box(-1.0, 1.0, (1,))
-
 
     # Run in eager mode for value checking and debugging.
     # tf1.enable_eager_execution()

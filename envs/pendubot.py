@@ -29,7 +29,15 @@ class PendubotEnv(gym.Env):
     isopen = True
 
 
-    def __init__(self, task="balance", initial_state=None, noisy=False, noisy_scale=1., eval=False, render_mode: Optional[str] = None):
+    def __init__(self, task="balance",
+                 initial_state=None,
+                 noisy=False,
+                 noisy_scale=1.,
+                 eval=False,
+                 reward_type='lqr', # lqr or energy
+                 theta_cal='sin_cos',
+                 render_mode: Optional[str] = None,
+                 **kwargs):
         # set task
         self.task = task
 
@@ -41,6 +49,8 @@ class PendubotEnv(gym.Env):
         self.noisy_scale = noisy_scale
         self.render_mode = render_mode
         self.eval = eval
+        self.reward_type = reward_type
+        self.theta_cal = theta_cal
         
         # gravity
         self.gravity = self.g = 9.8
@@ -137,6 +147,7 @@ class PendubotEnv(gym.Env):
         # assert self.action_space.contains(action), "%r (%s) invalid"%(action, type(action))
 
         # get state
+        state_t = self.state
         th1, th2, th1_dot, th2_dot = self.state
         th1 = self._unwrap_angle(th1)
         th2 = self._unwrap_angle(th2)
@@ -174,13 +185,16 @@ class PendubotEnv(gym.Env):
         terminated = False if self.eval else self.is_done()
         # terminated = False
 
+        lqr_reward = self.get_lqr_reward(state_t, action)
+        energy_reward = self.get_energy_reward(state_t, action)
+
         if not terminated:
-            reward = - (th1 - np.pi / 2) ** 2 - th1_dot ** 2 - 0.01 * action ** 2
+            reward = lqr_reward if self.reward_type == 'lqr' else energy_reward
         elif self.steps_beyond_terminated is None:
             # Pole just fell!
             self.steps_beyond_terminated = 0
             # reward = 1.0
-            reward = - (th1 - np.pi / 2) ** 2 - th1_dot ** 2 - 0.01 * action ** 2
+            reward = lqr_reward if self.reward_type == 'lqr' else energy_reward
         else:
             if self.steps_beyond_terminated == 0:
                 logger.warn("You are calling 'step()' even though this environment has already returned done = True. You should always call 'reset()' once you receive 'done = True' -- any further steps are undefined behavior.")
@@ -190,7 +204,30 @@ class PendubotEnv(gym.Env):
         if self.render_mode == 'human':
             self.render()
 
-        return np.array(self.state, dtype=np.float32), float(reward), terminated, False, {}
+        info= {'lqr_reward': lqr_reward,
+               'energy_reward': energy_reward,
+               'energy_error': self.energy_error}
+
+        return np.array(self.state, dtype=np.float32), float(reward), terminated, False, info
+
+    def get_lqr_reward(self, state, action):
+        th1, th2, th1_dot, th2_dot = state
+        if self.theta_cal == 'arctan':
+            return - (self._unwrap_angle(th1) - np.pi / 2) ** 2 - th1_dot ** 2 - 0.01 * self._unwrap_angle(th2) ** 2 \
+                - 0.01 * th2_dot ** 2 - 0.01 * action ** 2
+        elif self.theta_cal == 'sin_cos':
+            return - (np.sin(th1) - 1.) ** 2 - np.cos(th1) ** 2 - th1_dot ** 2 - 0.01 * np.sin(th2) ** 2 \
+                - 0.01 * (np.cos(th2) - 1.) ** 2 - 0.01 * th2_dot ** 2 - 0.01 * action ** 2
+
+    def get_energy_reward(self, state, action, ke=1.5):
+        energy = self.total_energy(state)
+        energy_on_top = (self.d4 + self.d5) * self.g
+        th1, th2, th1_dot, th2_dot = state
+        self.energy_error = energy - energy_on_top
+        if self.theta_cal == 'arctan':
+            return - (self._unwrap_angle(th1) - np.pi / 2) ** 2 - th1_dot ** 2 - ke * (energy - energy_on_top) ** 2
+        elif self.theta_cal == 'sin_cos':
+            return - (np.sin(th1) - 1.) ** 2 - np.cos(th1) ** 2 - th1_dot ** 2 - ke * (energy - energy_on_top) ** 2
 
     def _dynamics(self, vec):
         """
@@ -443,18 +480,21 @@ def energy_based_controller(env, kd = 1., kp = 1., ke = 1.5):
 
 
 def main():
-    env = PendubotEnv(render_mode='human')
+    env = PendubotEnv(render_mode=None, reward_type='lqr', noisy=True, noisy_scale=0.5)
     env.reset()
     print(env.state)
-    rewards = 0.
-    for i in range(200):
-        action = energy_based_controller(env)
-        # print(action)
-        _, reward, _, _, _ = env.step(action)
-
-        rewards += reward
-        # env.render()
-    print(rewards)
+    rets = []
+    for i in range(10):
+        rewards = 0.
+        for i in range(200):
+            action = energy_based_controller(env) / env.force_mag
+            _, reward, _, _, info = env.step(action)
+            # rewards += np.exp(10 * reward)
+            rewards += reward
+            # env.render()
+        # print(rewards)
+        rets.append(rewards)
+    print(np.mean(rets), np.std(rets))
 
 if __name__ == '__main__':
     main()
