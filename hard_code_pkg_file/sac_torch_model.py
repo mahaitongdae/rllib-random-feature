@@ -656,6 +656,9 @@ class SACTorchRFModel(SACTorchModel):
 
         return ke * energy_error ** 2
 
+    def angle_normalize(self, th):
+        return ((th + np.pi) % (2 * np.pi)) - np.pi
+
     def _get_reward(self, obs, action):
         if self.q_net.dynamics_type == 'Pendulum':
             assert obs.shape[1] == 3

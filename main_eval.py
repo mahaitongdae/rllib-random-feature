@@ -83,8 +83,8 @@ def env_creator_pendubot(env_config):
              entry_point='envs:PendubotEnv',
              max_episode_steps=200)
     env = gymnasium.make('Pendubot-v0',
-                         noisy=False,
-                         noisy_scale=0.,
+                         noisy=True,
+                         noisy_scale=0.5,
                          reward_type=env_config.get('reward_type'),
                          theta_cal=env_config.get('theta_cal'),
                          render_mode='human' if env_config.get('render') else None
@@ -149,14 +149,14 @@ def train_rfsac(args):
 
     # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3/checkpoint_000451')
     # algo.restore('/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-51-17i_cw3m6f/checkpoint_000451')
-    algo.restore('/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_00-44-0154jj9f05/checkpoint_001552')
+    algo.restore('/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_02-49-15fflqt3si/checkpoint_001602')
     policy = algo.workers.local_worker().policy_map['default_policy']
     returns = []
     eval_env_config = {'sin_input': True,
                   'reward_exponential': False,
                   'reward_scale': 1.,
-                  'reward_type': 'lqr',
-                  'theta_cal': 'sin_cos',
+                  'reward_type': 'energy',
+                  'theta_cal': 'arctan',
                   'render': False
                   }
     env = env_creator_pendubot(eval_env_config)
@@ -175,7 +175,7 @@ def train_rfsac(args):
             ret += reward
 
         returns.append(ret)
-    print(np.mean(returns), np.std(returns))
+    print("{:.3f} $\pm$ {:.3f}".format(np.mean(returns), np.std(returns)))
 
 
 if __name__ == "__main__":
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_scale", default=10., type=float)
     parser.add_argument("--reward_type", default='lqr', type=str)
-    parser.add_argument("--theta_cal", default='sin_cos', type=str)
+    parser.add_argument("--theta_cal", default='arctan', type=str)
     parser.add_argument("--comments", default='train with lqr and eval with energy, both exp', type=str)
     args = parser.parse_args()
     train_rfsac(args)

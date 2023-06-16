@@ -332,9 +332,7 @@ class PendubotEnv(gym.Env):
         return self.d4 * self.gravity * np.sin(th1) + self.d5 * self.gravity * np.sin(th1 + th2)
 
     def _unwrap_angle(self, theta):
-        sign = (theta >=0)*1 - (theta < 0)*1
-        theta = np.abs(theta) % (2 * np.pi)
-        return sign*theta
+        return ((theta + np.pi) % (2 * np.pi)) - np.pi
 
     def integrate(self):
         """

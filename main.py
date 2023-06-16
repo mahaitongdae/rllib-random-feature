@@ -163,7 +163,7 @@ def train_rfsac(args):
 
     if args.algo == 'RFSAC':
         config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=12) #
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=16) #
 
     elif args.algo == 'SAC':
         config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
@@ -175,7 +175,7 @@ def train_rfsac(args):
                             'sin_input': True,
                             'reward_exponential': True,
                             'reward_scale': 10.,
-                            'reward_type': 'energy',
+                            'reward_type': 'lqr',
                             })
     config = config.evaluation(
         # evaluation_parallel_to_training=True,
@@ -195,7 +195,9 @@ def train_rfsac(args):
         json.dump(RF_MODEL_DEFAULTS, fp, indent=2)
 
     # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3/checkpoint_000451')
-    algo.restore('/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-15_23-57-14kx2hy4ke/checkpoint_000751')
+    if args.restore_dir:
+        algo.restore(args.restore_dir)
+        # /home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_02-16-18e5y0w4ou/checkpoint_000801
 
     train_iter = 801
     for i in range(train_iter):
@@ -217,8 +219,9 @@ if __name__ == "__main__":
     parser.add_argument("--reward_scale", default=10., type=float)
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='lqr', type=str)
-    parser.add_argument("--theta_cal", default='sin_cos', type=str)
-    parser.add_argument("--comments", default='train with lqr and eval with energy, both exp', type=str)
+    parser.add_argument("--theta_cal", default='arctan', type=str)
+    parser.add_argument("--comments", default='train with arctan theta calculation and energy reward', type=str)
+    parser.add_argument("--restore_dir",default=None, type=str)
     args = parser.parse_args()
     train_rfsac(args)
     # env = env_creator_pendubot(ENV_CONFIG)
