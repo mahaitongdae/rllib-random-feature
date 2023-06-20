@@ -42,7 +42,9 @@ ENV_CONFIG = {'sin_input': True,
               'reward_exponential': False,
               'reward_scale': 10.,
               'reward_type' : 'energy',
-              'theta_cal': 'sin_cos'
+              'theta_cal': 'sin_cos',
+              'noisy': False,
+              'noise_scale': 0.
               }
 
 RF_MODEL_DEFAULTS.update(ENV_CONFIG)
@@ -126,12 +128,14 @@ def env_creator_cartpole(env_config):
 def env_creator_pendubot(env_config):
     from gymnasium.envs.registration import register
     reward_scale_pendubot = env_config.get('reward_scale')
+    noisy = env_config.get('noisy')
+    noise_scale = env_config.get('noise_scale')
     register(id='Pendubot-v0',
              entry_point='envs:PendubotEnv',
              max_episode_steps=200)
     env = gymnasium.make('Pendubot-v0',
-                         noisy=True,
-                         noisy_scale=0.5,
+                         noisy=noisy,
+                         noisy_scale=noise_scale,
                          reward_type=env_config.get('reward_type'),
                          theta_cal=env_config.get('theta_cal')
                          ) #, render_mode='human'
@@ -173,9 +177,9 @@ def train_rfsac(args):
     eval_env_config = copy.deepcopy(ENV_CONFIG)
     eval_env_config.update({
                             'sin_input': True,
-                            'reward_exponential': True,
-                            'reward_scale': 10.,
-                            'reward_type': 'lqr',
+                            'reward_exponential': False,
+                            'reward_scale': 1.,
+                            'reward_type': 'energy',
                             })
     config = config.evaluation(
         # evaluation_parallel_to_training=True,
@@ -195,11 +199,11 @@ def train_rfsac(args):
         json.dump(RF_MODEL_DEFAULTS, fp, indent=2)
 
     # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3/checkpoint_000451')
-    if args.restore_dir:
+    if args.restore_dir is not None:
         algo.restore(args.restore_dir)
         # /home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_02-16-18e5y0w4ou/checkpoint_000801
 
-    train_iter = 801
+    train_iter = 1601
     for i in range(train_iter):
         result = algo.train()
         print(pretty_print(result))
@@ -217,10 +221,12 @@ if __name__ == "__main__":
     parser.add_argument("--algo", default='RFSAC', type=str)
     parser.add_argument("--reward_exp", default=True, type=bool)
     parser.add_argument("--reward_scale", default=10., type=float)
+    parser.add_argument("--noisy", default=False, type=bool)
+    parser.add_argument("--noise_scale", default=0., type=float)
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='lqr', type=str)
-    parser.add_argument("--theta_cal", default='arctan', type=str)
-    parser.add_argument("--comments", default='train with arctan theta calculation and energy reward', type=str)
+    parser.add_argument("--theta_cal", default='sin_cos', type=str)
+    parser.add_argument("--comments", default='train with non-noisy env', type=str)
     parser.add_argument("--restore_dir",default=None, type=str)
     args = parser.parse_args()
     train_rfsac(args)

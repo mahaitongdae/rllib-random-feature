@@ -23,6 +23,7 @@ import numpy as np
 import json
 from main import TransformTriangleObservationWrapper, TransformDoubleTriangleObservationWrapper
 import torch
+import time
 
 from copy import deepcopy
 
@@ -79,12 +80,14 @@ def env_creator_cartpole(env_config):
 def env_creator_pendubot(env_config):
     from gymnasium.envs.registration import register
     reward_scale_pendubot = env_config.get('reward_scale')
+    noisy = env_config.get('noisy')
+    noise_scale = env_config.get('noise_scale')
     register(id='Pendubot-v0',
              entry_point='envs:PendubotEnv',
              max_episode_steps=200)
     env = gymnasium.make('Pendubot-v0',
-                         noisy=True,
-                         noisy_scale=0.5,
+                         noisy=noisy,
+                         noisy_scale=noise_scale,
                          reward_type=env_config.get('reward_type'),
                          theta_cal=env_config.get('theta_cal'),
                          render_mode='human' if env_config.get('render') else None
@@ -150,21 +153,23 @@ def train_rfsac(args):
     # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3/checkpoint_000451')
     # algo.restore('/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-51-17i_cw3m6f/checkpoint_000451')
     algo.restore('/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_02-49-15fflqt3si/checkpoint_001602')
+    # algo.restore('/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-19_12-27-51d40yaq_b/checkpoint_001501')
     policy = algo.workers.local_worker().policy_map['default_policy']
     returns = []
     eval_env_config = {'sin_input': True,
-                  'reward_exponential': False,
-                  'reward_scale': 1.,
-                  'reward_type': 'energy',
-                  'theta_cal': 'arctan',
-                  'render': False
-                  }
+                      'reward_exponential': False,
+                      'reward_scale': 1.,
+                      'reward_type' : 'energy',
+                      'theta_cal': 'sin_cos',
+                      'noisy': True,
+                      'noise_scale': 0.5,
+                       'render': False
+                      }
     env = env_creator_pendubot(eval_env_config)
     for eval_epis in range(10):
         ret = 0.
+        obs, _ = env.reset(seed=eval_epis)
         for _ in range(200):
-            obs, _ = env.reset(seed=eval_epis)
-            batch_size = 10
             input_ = np.array([obs])
             # Note that for PyTorch, you will have to provide torch tensors here.
             # if args.framework == "torch":
@@ -173,7 +178,7 @@ def train_rfsac(args):
             action, _, _ = policy.compute_actions_from_input_dict(input_dict=input_dict, explore=False)
             obs, reward, terminated, done, info = env.step(action[0])
             ret += reward
-
+        print(ret)
         returns.append(ret)
     print("{:.3f} $\pm$ {:.3f}".format(np.mean(returns), np.std(returns)))
 

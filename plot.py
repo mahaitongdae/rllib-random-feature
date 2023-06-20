@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import os
+import numpy as np
 
 def plot():
     sns.set(style='darkgrid', font_scale=1)
@@ -25,48 +26,56 @@ def plot():
     #     '32768': '/home/mht/ray_results/RFSAC_Quadrotor-v1_2023-05-08_18-58-048lea_yvt'
     # } # theta directly
 
-    path_dict = {
-        '2048exp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-51-176qhk6ywr',
-        '4096exp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-51-177n68vpde',
-        '8192exp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-51-17fie8olrt',
-        'SACsinthexp' : '/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-51-17i_cw3m6f',
-        '8192': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-02-30x2m7zjo4',
-        '4096': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-02-3013hj5ilk',
-        '2048': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-02-30sn_cqvve',
-        'SACsinth': '/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-02-30fqar1_os',
-        '8192th': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-21nv70ribt',
-        '4096th': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-21lnb8dai3',
-        '2048th': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3',
-        'SACth': '/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-37-2148n_4kxq',
-        '8192thexp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_09-14-10_dpm46gh',
-        '4096thexp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_09-14-10bptykb5h',
-        '2048thexp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_09-14-10kwro4fll',
-        'SACthexp': '/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_09-14-10dwii3is2',
+    # Cartpole
 
-    } # theta directly
+    # path_dict = {
+    #     '2048exp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-51-176qhk6ywr',
+    #     '4096exp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-51-177n68vpde',
+    #     '8192exp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-51-17fie8olrt',
+    #     'SACsinthexp' : '/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-51-17i_cw3m6f',
+    #     '8192': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-02-30x2m7zjo4',
+    #     '4096': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-02-3013hj5ilk',
+    #     '2048': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-02-30sn_cqvve',
+    #     'SACsinth': '/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-02-30fqar1_os',
+    #     '8192th': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-21nv70ribt',
+    #     '4096th': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-21lnb8dai3',
+    #     '2048th': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3',
+    #     'SACth': '/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-37-2148n_4kxq',
+    #     '8192thexp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_09-14-10_dpm46gh',
+    #     '4096thexp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_09-14-10bptykb5h',
+    #     '2048thexp': '/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_09-14-10kwro4fll',
+    #     'SACthexp': '/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_09-14-10dwii3is2',
+    #
+    # } # theta directly
+
+    path_dict = {
+        r'$r_{energy}$' : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-19_10-37-28nljvhenj',
+        r'$r_{q}$' : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-15_23-57-14kx2hy4ke'
+    }
 
 
     dfs = []
     for rfdim, path in path_dict.items():
         # rfdim = int(rfdim)
         df = pd.read_csv(os.path.join(path, 'progress.csv'))
-        # df['random_feature_dim'] = rfdim
-        if rfdim.startswith('SAC'):
-            df['exp_setup'] = rfdim
-        elif rfdim.endswith('thexp'):
-            df['exp_setup'] = 'thexp'
-        elif rfdim.endswith('exp'):
-            df['exp_setup'] = 'sinthexp'
-        elif rfdim.endswith('th'):
-            df['exp_setup'] = 'th'
-        else:
-            df['exp_setup'] = 'sinth'
+        df['exp_setup'] = rfdim
+        df['episode_reward_evaluated'] = np.log(df['episode_reward_mean'] / 200.) / 10. * 200
+        # if rfdim.startswith('SAC'):
+        #     df['exp_setup'] = rfdim
+        # elif rfdim.endswith('thexp'):
+        #     df['exp_setup'] = 'thexp'
+        # elif rfdim.endswith('exp'):
+        #     df['exp_setup'] = 'sinthexp'
+        # elif rfdim.endswith('th'):
+        #     df['exp_setup'] = 'th'
+        # else:
+        #     df['exp_setup'] = 'sinth'
         a = 0
         dfs.append(df)
 
     total_df = pd.concat(dfs, ignore_index=True)
-    for y in ['episode_reward_mean', 'episode_len_mean']: # 'episode_reward_min', 'episode_reward_max',
-        plt.figure()
+    for y in ['episode_reward_mean', 'episode_len_mean','episode_reward_evaluated']: # 'episode_reward_min', 'episode_reward_max',
+        plt.figure(figsize=[6, 4])
         sns.lineplot(total_df, x='training_iteration', y=y, hue='exp_setup', palette='muted')
         # plt.tight_layout()
         plt.title(y)

@@ -120,6 +120,7 @@ class PendubotEnv(gym.Env):
             seed: Optional[int] = None,
             options: Optional[dict] = None,
     ):
+        np.random.seed(seed)
         if self.initial_state:
             self.state = self.initial_state
         else:
@@ -478,11 +479,10 @@ def energy_based_controller(env, kd = 1., kp = 1., ke = 1.5):
 
 
 def main():
-    env = PendubotEnv(render_mode=None, reward_type='lqr', noisy=True, noisy_scale=0.5)
-    env.reset()
-    print(env.state)
+    env = PendubotEnv(render_mode=None, reward_type='energy', theta_cal='sin_cos', noisy=False, noisy_scale=0.)
     rets = []
-    for i in range(10):
+    for i in range(100):
+        env.reset(seed=i)
         rewards = 0.
         for i in range(200):
             action = energy_based_controller(env) / env.force_mag
