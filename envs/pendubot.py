@@ -120,7 +120,7 @@ class PendubotEnv(gym.Env):
             seed: Optional[int] = None,
             options: Optional[dict] = None,
     ):
-        np.random.seed(seed)
+        self.seed(seed)
         if self.initial_state:
             self.state = self.initial_state
         else:
@@ -143,6 +143,10 @@ class PendubotEnv(gym.Env):
         else:
             done = False
         return done
+
+    def get_state(self):
+
+        return self.state
 
     def step(self, action):
         # assert self.action_space.contains(action), "%r (%s) invalid"%(action, type(action))
@@ -181,8 +185,9 @@ class PendubotEnv(gym.Env):
         self.state = np.array([th1, th2, th1_dot, th2_dot])
 
         if self.noisy:
-            self.state = self.state + np.random.normal(loc=0., scale=self.noisy_scale * 0.05, size=(4,))
-        
+            # self.state = self.state + np.random.normal(loc=0., scale=self.noisy_scale * 0.05, size=(4,))
+            self.state[-2:] = self.state[-2:] + self.np_random.normal(loc=0., scale=self.noisy_scale * 0.05, size=(2,))
+
         terminated = False if self.eval else self.is_done()
         # terminated = False
 
