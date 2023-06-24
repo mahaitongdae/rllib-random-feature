@@ -1,7 +1,6 @@
 import gymnasium
 import ray
-from ray.rllib.algorithms.sac import SACConfig, sac, RFSACConfig
-from ray.tune.logger import pretty_print
+from ray.rllib.algorithms.sac import SACConfig, RFSACConfig
 from ray.rllib.models import ModelCatalog, MODEL_DEFAULTS
 from sac_torch_random_feature_model import SACTorchRFModel
 from ray.rllib.utils.typing import ModelConfigDict
@@ -23,9 +22,6 @@ import numpy as np
 import json
 from main import TransformTriangleObservationWrapper, TransformDoubleTriangleObservationWrapper
 import torch
-import time
-
-from copy import deepcopy
 
 ModelCatalog.register_custom_model("sac_rf_model", SACTorchRFModel)
 

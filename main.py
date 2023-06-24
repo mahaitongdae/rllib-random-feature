@@ -1,11 +1,10 @@
 import gymnasium
-import ray
-from ray.rllib.algorithms.sac import SACConfig, sac, RFSACConfig
+from ray.rllib.algorithms.sac import SACConfig, RFSACConfig
 from ray.tune.logger import pretty_print
-from ray.rllib.models import ModelCatalog, MODEL_DEFAULTS
-from sac_torch_random_feature_model import SACTorchRFModel
+from ray.rllib.models import ModelCatalog
 from ray.rllib.utils.typing import ModelConfigDict
 from ray.tune.registry import register_env, ENV_CREATOR, _global_registry
+import ray
 
 import os.path as osp
 import sys
@@ -21,9 +20,7 @@ import argparse
 import numpy as np
 import json
 import copy
-from custom_model import RandomFeatureQModel, NystromSampleQModel
-
-from copy import deepcopy
+from nonlinear_control_representation.custom_model import RandomFeatureQModel, NystromSampleQModel
 
 ModelCatalog.register_custom_model('random_feature_q', RandomFeatureQModel)
 ModelCatalog.register_custom_model('nystrom_q', NystromSampleQModel)
@@ -126,7 +123,7 @@ def env_creator_cartpole(env_config):
     from gymnasium.envs.registration import register
 
     register(id='CartPoleContinuous-v0',
-             entry_point='envs:CartPoleEnv',
+             entry_point='nonlinear_control_representation.envs:CartPoleEnv',
              max_episode_steps=300)
     env = gymnasium.make('CartPoleContinuous-v0') #, render_mode='human'
     if env_config.get('reward_exponential'):
@@ -142,7 +139,7 @@ def env_creator_pendubot(env_config):
     noisy = env_config.get('noisy')
     noise_scale = env_config.get('noise_scale')
     register(id='Pendubot-v0',
-             entry_point='envs:PendubotEnv',
+             entry_point='nonlinear_control_representation.envs:PendubotEnv',
              max_episode_steps=200)
     env = gymnasium.make('Pendubot-v0',
                          noisy=noisy,
@@ -159,7 +156,7 @@ def env_creator_pendubot(env_config):
         return env
 
 def train_rfsac(args):
-    ray.init(num_cpus=4, local_mode=True)
+    # ray.init(num_cpus=4, local_mode=True)
 
 
     register_env('Quadrotor2D-v1', env_creator)
@@ -177,6 +174,7 @@ def train_rfsac(args):
     })
     custom_model_config.update(ENV_CONFIG)
     RF_MODEL_DEFAULTS.update({'comments': args.comments})
+    RF_MODEL_DEFAULTS.update({'custom_model': args.custom_model})
 
     env_creator_func = _global_registry.get(ENV_CREATOR, args.env_id) # from algorithm.py line 2212, Algorithm.__init__()
     env = env_creator_func(ENV_CONFIG)
@@ -195,7 +193,7 @@ def train_rfsac(args):
     #
     # elif args.algo == 'SAC':
     config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-        .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=4)
+        .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=12)
 
     # if args.eval:
     eval_env_config = copy.deepcopy(ENV_CONFIG)
@@ -209,7 +207,7 @@ def train_rfsac(args):
         # evaluation_parallel_to_training=True,
         evaluation_interval=10,
         evaluation_duration=10,
-        evaluation_num_workers=1,
+        # evaluation_num_workers=1,
         evaluation_config=RFSACConfig.overrides(render_env=False,
                                                 env_config = eval_env_config
                                                 )
@@ -227,7 +225,7 @@ def train_rfsac(args):
         algo.restore(args.restore_dir)
         # /home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_02-16-18e5y0w4ou/checkpoint_000801
 
-    train_iter = 1601
+    train_iter = 1201
     for i in range(train_iter):
         result = algo.train()
         print(pretty_print(result))
@@ -240,8 +238,8 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--custom_model", default='nystrom_q', type=str, help="Choose model from following: nystrom_q, random_feature_q") #
-    parser.add_argument("--feature_dim", default=256, type=int)
+    parser.add_argument("--custom_model", default='random_feature_q', type=str, help="Choose model from following: nystrom_q, random_feature_q") #
+    parser.add_argument("--feature_dim", default=32768, type=int)
     parser.add_argument("--env_id", default='Pendubot-v0', type=str)
     parser.add_argument("--algo", default='SAC', type=str)
     parser.add_argument("--reward_exp", default=True, type=bool)
@@ -249,9 +247,9 @@ if __name__ == "__main__":
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
     parser.add_argument("--eval", default=False, type=bool)
-    parser.add_argument("--reward_type", default='lqr', type=str)
+    parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
-    parser.add_argument("--comments", default='debug revised custom model', type=str)
+    parser.add_argument("--comments", default='Nystrom Q with 2048 feature', type=str)
     parser.add_argument("--restore_dir",default=None, type=str)
     args = parser.parse_args()
     train_rfsac(args)
