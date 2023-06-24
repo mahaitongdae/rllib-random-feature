@@ -102,7 +102,7 @@ def env_creator_pendubot(env_config):
 
 def train_rfsac(args):
     ray.init(local_mode=True)
-    RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
+    RF_MODEL_DEFAULTS.update({'random_feature_dim': args.feature_dim})
     RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
     ENV_CONFIG.update({
                         'reward_exponential':args.reward_exp,

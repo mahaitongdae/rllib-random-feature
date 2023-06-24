@@ -5,7 +5,7 @@ from ray.tune.logger import pretty_print
 from ray.rllib.models import ModelCatalog, MODEL_DEFAULTS
 from sac_torch_random_feature_model import SACTorchRFModel
 from ray.rllib.utils.typing import ModelConfigDict
-from ray.tune.registry import register_env
+from ray.tune.registry import register_env, ENV_CREATOR, _global_registry
 
 import os.path as osp
 import sys
@@ -21,22 +21,33 @@ import argparse
 import numpy as np
 import json
 import copy
+from custom_model import RandomFeatureQModel, NystromSampleQModel
 
 from copy import deepcopy
 
-ModelCatalog.register_custom_model("sac_rf_model", SACTorchRFModel)
+ModelCatalog.register_custom_model('random_feature_q', RandomFeatureQModel)
+ModelCatalog.register_custom_model('nystrom_q', NystromSampleQModel)
 
-RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 8192,
-                                      'sigma': 0,
-                                      'learn_rf': False,
-                                      'dynamics_type': 'Quadrotor2D', # Pendulum, Quadrotor2D
-                                      'dynamics_parameters': {
-                                                              # 'stabilizing_target': [0.0, 0.0, 0.5, 0.0, 0.0, 0.0],
-                                                              # 'reward_exponential': REWARD_EXP,
-                                                              # 'reward_scale': REWARD_SCALE,
-                                                              }}
+RF_MODEL_DEFAULTS: ModelConfigDict = {
+                                          'custom_model': 'nystrom_q',
+                                          'custom_model_config': {
+                                              'feature_dim': 8192,
+                                              'sigma': 0,
+                                              'learn_rf': False,
+                                              'dynamics_type': 'Pendubot',
+                                              'obs_space_high': None,
+                                              'obs_space_low': None,
+                                              'obs_space_dim': None,
+                                              'dynamics_parameters': {
+                                                  # 'stabilizing_target': torch.tensor([0.0, 0.0, 0.5, 0.0, 0.0, 0.0]),
+                                                  'reward_scale': 10.,
+                                                  'reward_exponential': False,
+                                                  'reward_type': 'lqr',
+                                              },
 
-RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
+                                         }
+                                     }
+
 
 ENV_CONFIG = {'sin_input': True,
               'reward_exponential': False,
@@ -47,8 +58,8 @@ ENV_CONFIG = {'sin_input': True,
               'noise_scale': 0.
               }
 
-RF_MODEL_DEFAULTS.update(ENV_CONFIG)
-RF_MODEL_DEFAULTS.get('dynamics_parameters').update(ENV_CONFIG)
+custom_model_config = RF_MODEL_DEFAULTS.get('custom_model_config')
+custom_model_config.update(ENV_CONFIG)
 
 class TransformTriangleObservationWrapper(gymnasium.ObservationWrapper):
 
@@ -149,29 +160,42 @@ def env_creator_pendubot(env_config):
 
 def train_rfsac(args):
     ray.init(num_cpus=4, local_mode=True)
-    RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
-    RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
-    ENV_CONFIG.update({
-                        'reward_exponential':args.reward_exp,
-                        'reward_type': args.reward_type,
-                        'reward_scale': args.reward_scale,
-                        'theta_cal': args.theta_cal
-                      })
-    RF_MODEL_DEFAULTS['dynamics_parameters'].update(ENV_CONFIG)
-    RF_MODEL_DEFAULTS.update(ENV_CONFIG) # todo:not update twice
-    RF_MODEL_DEFAULTS.update({'comments': args.comments})
+
 
     register_env('Quadrotor2D-v1', env_creator)
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
     register_env('Pendubot-v0', env_creator_pendubot)
 
-    if args.algo == 'RFSAC':
-        config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=16) #
+    # update parameters
+    custom_model_config.update({'feature_dim': args.feature_dim})
+    custom_model_config.update({'dynamics_type': args.env_id.split('-')[0]})
+    ENV_CONFIG.update({
+        'reward_exponential': args.reward_exp,
+        'reward_type': args.reward_type,
+        'reward_scale': args.reward_scale,
+        'theta_cal': args.theta_cal
+    })
+    custom_model_config.update(ENV_CONFIG)
+    RF_MODEL_DEFAULTS.update({'comments': args.comments})
 
-    elif args.algo == 'SAC':
-        config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=4)
+    env_creator_func = _global_registry.get(ENV_CREATOR, args.env_id) # from algorithm.py line 2212, Algorithm.__init__()
+    env = env_creator_func(ENV_CONFIG)
+    custom_model_config.update({
+        'obs_space_high': env.observation_space.high.tolist(),
+        'obs_space_low': env.observation_space.low.tolist(),
+        'obs_space_dim': env.observation_space.shape,
+    })
+    del env
+
+    # env = ray.tune.
+
+    # if args.algo == 'RFSAC':
+    #     config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
+    #         .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=16) #
+    #
+    # elif args.algo == 'SAC':
+    config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
+        .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=4)
 
     # if args.eval:
     eval_env_config = copy.deepcopy(ENV_CONFIG)
@@ -216,7 +240,8 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=32768, type=int)
+    parser.add_argument("--custom_model", default='nystrom_q', type=str, help="Choose model from following: nystrom_q, random_feature_q") #
+    parser.add_argument("--feature_dim", default=256, type=int)
     parser.add_argument("--env_id", default='Pendubot-v0', type=str)
     parser.add_argument("--algo", default='SAC', type=str)
     parser.add_argument("--reward_exp", default=True, type=bool)
@@ -226,7 +251,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='lqr', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
-    parser.add_argument("--comments", default='train with non-noisy env', type=str)
+    parser.add_argument("--comments", default='debug revised custom model', type=str)
     parser.add_argument("--restore_dir",default=None, type=str)
     args = parser.parse_args()
     train_rfsac(args)
