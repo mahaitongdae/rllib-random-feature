@@ -5,7 +5,8 @@ from ray.tune.logger import pretty_print
 from ray.rllib.models import ModelCatalog, MODEL_DEFAULTS
 from sac_torch_random_feature_model import SACTorchRFModel
 from ray.rllib.utils.typing import ModelConfigDict
-from ray.tune.registry import register_env
+from ray.tune.registry import register_env, ENV_CREATOR, _global_registry
+import ray
 
 import os.path as osp
 import sys
@@ -148,7 +149,7 @@ def env_creator_pendubot(env_config):
         return env
 
 def train_rfsac(args):
-    # ray.init(num_cpus=4, local_mode=True)
+    ray.init(num_cpus=4, local_mode=True)
     RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
     RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
     ENV_CONFIG.update({
@@ -159,15 +160,26 @@ def train_rfsac(args):
                       })
     RF_MODEL_DEFAULTS['dynamics_parameters'].update(ENV_CONFIG)
     RF_MODEL_DEFAULTS.update(ENV_CONFIG) # todo:not update twice
-    RF_MODEL_DEFAULTS.update({'comments': args.comments})
+    RF_MODEL_DEFAULTS.update({'comments': args.comments,
+                              'kernel_representation': args.kernel_representation})
 
     register_env('Quadrotor2D-v1', env_creator)
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
     register_env('Pendubot-v0', env_creator_pendubot)
 
+    env_creator_func = _global_registry.get(ENV_CREATOR,
+                                            args.env_id)  # from algorithm.py line 2212, Algorithm.__init__()
+    env = env_creator_func(ENV_CONFIG)
+    RF_MODEL_DEFAULTS.update({
+        'obs_space_high': env.observation_space.high.tolist(),
+        'obs_space_low': env.observation_space.low.tolist(),
+        'obs_space_dim': env.observation_space.shape,
+    })
+    del env
+
     if args.algo == 'RFSAC':
         config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=16) #
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1) #
 
     elif args.algo == 'SAC':
         config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
@@ -216,7 +228,7 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=32768, type=int)
+    parser.add_argument("--random_feature_dim", default=2048, type=int)
     parser.add_argument("--env_id", default='Pendubot-v0', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
     parser.add_argument("--reward_exp", default=True, type=bool)
@@ -224,10 +236,11 @@ if __name__ == "__main__":
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
     parser.add_argument("--eval", default=False, type=bool)
-    parser.add_argument("--reward_type", default='lqr', type=str)
+    parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
-    parser.add_argument("--comments", default='train with non-noisy env', type=str)
+    parser.add_argument("--comments", default='nystrom', type=str)
     parser.add_argument("--restore_dir",default=None, type=str)
+    parser.add_argument("--kernel_representation", default='nystrom', type=str)
     args = parser.parse_args()
     train_rfsac(args)
     # env = env_creator_pendubot(ENV_CONFIG)

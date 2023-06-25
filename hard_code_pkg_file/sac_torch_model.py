@@ -65,6 +65,70 @@ class RandomFeatureNetwork(TorchModelV2, nn.Module):
     def value_function(self) -> TensorType:
         raise NotImplementedError
 
+class NystromSampleQModel(TorchModelV2, nn.Module):
+
+    def __init__(self, obs_space: gym.spaces.Space, action_space: gym.spaces.Space, num_outputs: int,
+                 model_config: ModelConfigDict, name: str, **kwargs):
+        TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
+        nn.Module.__init__(self)
+
+        s_low = model_config.get('obs_space_low')
+        s_high = model_config.get('obs_space_high')
+        s_dim = model_config.get('obs_space_dim')
+        s_dim = s_dim[0] if isinstance(s_dim, tuple) else s_dim
+        self.feature_dim = model_config.get('random_feature_dim')
+        self.sigma = model_config.get('sigma')
+        self.dynamics_type = model_config.get('dynamics_type')
+        self.sin_input = model_config.get('sin_input')
+        self.dynamics_parameters = model_config.get('dynamics_parameters')
+
+        self.nystrom_samples1 = np.random.uniform(s_low, s_high, size=(self.feature_dim, s_dim))
+
+        if self.sigma > 0.0:
+            self.kernel = lambda z: np.exp(-np.linalg.norm(z)**2/(2.* self.sigma**2))
+        else:
+            self.kernel = lambda z: np.exp(-np.linalg.norm(z)**2/(2.))
+
+        K_m1 = self.get_kernel_matrix(self.nystrom_samples1)
+        [eig_vals1, S1] = np.linalg.eig(K_m1)  # numpy linalg eig doesn't produce negative eigenvalues... (unlike torch)
+        self.eig_vals1 = torch.from_numpy(eig_vals1).float()
+        self.S1 = torch.from_numpy(S1).float()
+        self.nystrom_samples1 = torch.from_numpy(self.nystrom_samples1)
+
+
+        self.n_neurons = self.feature_dim
+        layer1 = nn.Linear(self.n_neurons, 1)  # try default scaling
+        torch.nn.init.zeros_(layer1.bias)
+        layer1.bias.requires_grad = False  # weight is the only thing we update
+        self.output1 = layer1
+
+    def get_kernel_matrix(self, samples):
+
+        m, d = samples.shape
+        K_m = np.empty((m, m))
+        for i in np.arange(m):
+            for j in np.arange(m):
+                K_m[i, j] = self.kernel(samples[i, :] - samples[j, :])
+        return K_m
+
+    def forward(
+            self,
+            input_dict: Dict[str, TensorType],
+            state: List[TensorType],
+            seq_lens: TensorType,
+    ) -> (TensorType, List[TensorType]):
+
+        obs = input_dict["obs_flat"].float()
+
+        x1 = self.nystrom_samples1.unsqueeze(0) - obs.unsqueeze(1)
+        K_x1 = torch.exp(-torch.linalg.norm(x1, axis=2) ** 2 / 2).float()
+        phi_all1 = (K_x1 @ (self.S1)) @ torch.diag(self.eig_vals1 ** (-0.5))
+        phi_all1 = phi_all1 * self.n_neurons * 5 #todo: the scaling matters?
+        phi_all1 = phi_all1.to(torch.float32)
+
+        logits = self.output1(phi_all1)
+        return logits, state
+
 
 class SACTorchModel(TorchModelV2, nn.Module):
     """Extension of the standard TorchModelV2 for SAC.
@@ -407,10 +471,16 @@ class SACTorchRFModel(SACTorchModel):
             assert isinstance(action_space, Simplex)
             q_outs = 1
 
-        self.q_net = RandomFeatureNetwork(obs_space, action_space, q_outs, q_model_config, 'q')
+        if q_model_config.get('kernel_representation') == 'random_feature':
+            self.q_net = RandomFeatureNetwork(obs_space, action_space, q_outs, q_model_config, 'q')
+        elif q_model_config.get('kernel_representation') == 'nystrom':
+            self.q_net = NystromSampleQModel(obs_space, action_space, q_outs, q_model_config, 'q')
 
         if twin_q:
-            self.twin_q_net = RandomFeatureNetwork(obs_space, action_space, q_outs, q_model_config, 'twin_q')
+            if q_model_config.get('kernel_representation') == 'random_feature':
+                self.twin_q_net = RandomFeatureNetwork(obs_space, action_space, q_outs, q_model_config, 'q')
+            elif q_model_config.get('kernel_representation') == 'nystrom':
+                self.twin_q_net = NystromSampleQModel(obs_space, action_space, q_outs, q_model_config, 'q')
 
     def _get_q_value(self, model_out, actions, net):
         # Model outs may come as original Tuple observations, concat them
@@ -744,21 +814,31 @@ if __name__ == '__main__':
     from ray.rllib.algorithms.sac import SACConfig
     from ray.rllib.policy.sample_batch import SampleBatch
 
-    RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 256,
+    obs_space = Box(-1.0, 1.0, (6,))
+    action_space = Box(-1.0, 1.0, (1,))
+
+    RF_MODEL_DEFAULTS: ModelConfigDict = {
+                                            'kernel_representation': 'nystrom',
+                                            'random_feature_dim': 256,
                                           'sigma': 0,
                                           'learn_rf': False,
                                           'dynamics_type': 'Pendubot',
+                                          'obs_space_low': obs_space.low.tolist(),
+                                          'obs_space_high': obs_space.high.tolist(),
+                                          'obs_space_dim': obs_space.shape,
                                           'dynamics_parameters': {
                                               'stabilizing_target': torch.tensor([0.0, 0.0, 0.5, 0.0, 0.0, 0.0]),
                                               'reward_scale': 10.,
                                               'reward_exponential': False,
                                               'reward_type': 'lqr',
+                                              'theta_cal': 'sin_cos',
+                                              'noisy': False,
+                                              'noise_scale': 0.
                                           },
                                           'sin_input': True}
 
     RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
-    obs_space = Box(-1.0, 1.0, (6,))
-    action_space = Box(-1.0, 1.0, (1,))
+
 
     # Run in eager mode for value checking and debugging.
     # tf1.enable_eager_execution()
@@ -781,7 +861,7 @@ if __name__ == '__main__':
     )
     # __sphinx_doc_model_construct_1_end__
 
-    batch_size = 10
+    batch_size = 256
     input_ = np.array([obs_space.sample() for _ in range(batch_size)])
     actions_ = np.array([action_space.sample() for _ in range(batch_size)])
     # Note that for PyTorch, you will have to provide torch tensors here.
