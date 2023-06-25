@@ -112,6 +112,14 @@ def env_creator(env_config):
     else:
         return TransformReward(env, lambda r: env_config.get('reward_scale') * r)
 
+def env_creator_pendulum(env_config):
+    env = gymnasium.make('Pendulum-v1')
+    if env_config.get('reward_exponential'):
+        env = TransformReward(env, lambda r: np.exp(env_config.get('reward_scale') * r))
+    else:
+        env = TransformReward(env, lambda r: env_config.get('reward_scale') * r)
+    return env
+
 def env_creator_cartpole(env_config):
     from gymnasium.envs.registration import register
 
@@ -149,7 +157,7 @@ def env_creator_pendubot(env_config):
         return env
 
 def train_rfsac(args):
-    ray.init(num_cpus=4, local_mode=True)
+    # ray.init(num_cpus=4, local_mode=True)
     RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
     RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
     ENV_CONFIG.update({
@@ -166,6 +174,7 @@ def train_rfsac(args):
     register_env('Quadrotor2D-v1', env_creator)
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
     register_env('Pendubot-v0', env_creator_pendubot)
+    register_env('Pendulum-v1', env_creator_pendulum)
 
     env_creator_func = _global_registry.get(ENV_CREATOR,
                                             args.env_id)  # from algorithm.py line 2212, Algorithm.__init__()
@@ -179,7 +188,7 @@ def train_rfsac(args):
 
     if args.algo == 'RFSAC':
         config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1) #
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=12) #
 
     elif args.algo == 'SAC':
         config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
@@ -228,22 +237,25 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=2048, type=int)
-    parser.add_argument("--env_id", default='Pendubot-v0', type=str)
+    parser.add_argument("--random_feature_dim", default=512, type=int)
+    parser.add_argument("--env_id", default='Pendulum-v1', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
-    parser.add_argument("--reward_exp", default=True, type=bool)
-    parser.add_argument("--reward_scale", default=10., type=float)
+    parser.add_argument("--reward_exp", default=False, type=bool)
+    parser.add_argument("--reward_scale", default=1., type=float)
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
-    parser.add_argument("--comments", default='nystrom', type=str)
+    parser.add_argument("--comments", default='change to uniform', type=str)
     parser.add_argument("--restore_dir",default=None, type=str)
     parser.add_argument("--kernel_representation", default='nystrom', type=str)
     args = parser.parse_args()
     train_rfsac(args)
+    # env_creator_func = _global_registry.get(ENV_CREATOR,
+    #                                         'Pendulum-v1')
     # env = env_creator_pendubot(ENV_CONFIG)
+    # env = gymnasium.make('Pendulum-v1')
     # print(env.reset())
     # print(env.observation_space)
     # print(env.action_space)

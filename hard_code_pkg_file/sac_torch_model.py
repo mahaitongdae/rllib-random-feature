@@ -1,3 +1,5 @@
+import copy
+
 import gymnasium as gym
 from gymnasium.spaces import Box, Discrete
 import numpy as np
@@ -65,6 +67,7 @@ class RandomFeatureNetwork(TorchModelV2, nn.Module):
     def value_function(self) -> TensorType:
         raise NotImplementedError
 
+
 class NystromSampleQModel(TorchModelV2, nn.Module):
 
     def __init__(self, obs_space: gym.spaces.Space, action_space: gym.spaces.Space, num_outputs: int,
@@ -82,19 +85,19 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
         self.sin_input = model_config.get('sin_input')
         self.dynamics_parameters = model_config.get('dynamics_parameters')
 
+        # self.nystrom_samples1 = np.random.normal(np.zeros([3,]), np.array([0.3, 0.3, 0.3]), size=(self.feature_dim, s_dim))
         self.nystrom_samples1 = np.random.uniform(s_low, s_high, size=(self.feature_dim, s_dim))
 
         if self.sigma > 0.0:
-            self.kernel = lambda z: np.exp(-np.linalg.norm(z)**2/(2.* self.sigma**2))
+            self.kernel = lambda z: np.exp(-np.linalg.norm(z) ** 2 / (2. * self.sigma ** 2))
         else:
-            self.kernel = lambda z: np.exp(-np.linalg.norm(z)**2/(2.))
+            self.kernel = lambda z: np.exp(-np.linalg.norm(z) ** 2 / (2.))
 
         K_m1 = self.get_kernel_matrix(self.nystrom_samples1)
         [eig_vals1, S1] = np.linalg.eig(K_m1)  # numpy linalg eig doesn't produce negative eigenvalues... (unlike torch)
         self.eig_vals1 = torch.from_numpy(eig_vals1).float()
         self.S1 = torch.from_numpy(S1).float()
         self.nystrom_samples1 = torch.from_numpy(self.nystrom_samples1)
-
 
         self.n_neurons = self.feature_dim
         layer1 = nn.Linear(self.n_neurons, 1)  # try default scaling
@@ -107,8 +110,10 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
         m, d = samples.shape
         K_m = np.empty((m, m))
         for i in np.arange(m):
-            for j in np.arange(m):
+            for j in np.arange(i + 1):
                 K_m[i, j] = self.kernel(samples[i, :] - samples[j, :])
+                if j != i:
+                    K_m[j, i] = copy.deepcopy(K_m[i, j])
         return K_m
 
     def forward(
@@ -122,8 +127,8 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
 
         x1 = self.nystrom_samples1.unsqueeze(0) - obs.unsqueeze(1)
         K_x1 = torch.exp(-torch.linalg.norm(x1, axis=2) ** 2 / 2).float()
-        phi_all1 = (K_x1 @ (self.S1)) @ torch.diag(self.eig_vals1 ** (-0.5))
-        phi_all1 = phi_all1 * self.n_neurons * 5 #todo: the scaling matters?
+        phi_all1 = (K_x1 @ (self.S1)) @ torch.diag((self.eig_vals1 + 1e-8) ** (-0.5))
+        phi_all1 = phi_all1 * self.n_neurons * 5  # todo: the scaling matters?
         phi_all1 = phi_all1.to(torch.float32)
 
         logits = self.output1(phi_all1)
@@ -554,10 +559,10 @@ class SACTorchRFModel(SACTorchModel):
         new_states = torch.empty_like(states)
         new_states[:, 0] = states[:, 0] + dt * states[:, 1]
         new_states[:, 1] = states[:, 1] + dt * (
-                    1 / m * torch.multiply(torch.sum(action, dim=1), torch.sin(states[:, 4])))
+                1 / m * torch.multiply(torch.sum(action, dim=1), torch.sin(states[:, 4])))
         new_states[:, 2] = states[:, 2] + dt * states[:, 3]
         new_states[:, 3] = states[:, 3] + dt * (
-                    1 / m * torch.multiply(torch.sum(action, dim=1), torch.cos(states[:, 4])) - g)
+                1 / m * torch.multiply(torch.sum(action, dim=1), torch.cos(states[:, 4])) - g)
         theta = torch.atan2(states[:, -2], states[:, -3])
         new_theta = theta + dt * states[:, 5]
         new_states[:, 4] = torch.cos(new_theta)
@@ -735,8 +740,8 @@ class SACTorchRFModel(SACTorchModel):
             th = torch.atan2(obs[:, 1], obs[:, 0])  # 1 is sin, 0 is cosine
             thdot = obs[:, 2]
             action = torch.reshape(action, (action.shape[0],))
-            th = angle_normalize(th)
-            reward = -(th ** 2 + 0.1 * thdot ** 2 + 0.01 * action ** 2)
+            th = self.angle_normalize(th)
+            reward = -(th ** 2 + 0.1 * thdot ** 2 + 0.001 * action ** 2)
 
         elif self.q_net.dynamics_type == 'Quadrotor2D':
             if isinstance(self.q_net.dynamics_parameters.get('stabilizing_target'), list):
@@ -796,13 +801,14 @@ class SACTorchRFModel(SACTorchModel):
                         sin_th1 = obs[:, 1]
                         cos_th2 = obs[:, 2]
                         sin_th2 = obs[:, 3]
-                        reward = -1. * ((cos_th1) ** 2 + (sin_th1 - 1.) ** 2 + th1dot ** 2 + self._get_energy_error(obs, action))
+                        reward = -1. * ((cos_th1) ** 2 + (sin_th1 - 1.) ** 2 + th1dot ** 2 + self._get_energy_error(obs,
+                                                                                                                    action))
                     else:
                         raise NotImplementedError
                 else:
                     raise NotImplementedError
-                reward_scale = self.q_net.dynamics_parameters.get('reward_scale')
-                reward = reward_scale * reward
+        reward_scale = self.q_net.dynamics_parameters.get('reward_scale')
+        reward = reward_scale * reward
         # exponent
         if self.q_net.dynamics_parameters.get('reward_exponential'):
             reward = torch.exp(reward)
@@ -818,27 +824,26 @@ if __name__ == '__main__':
     action_space = Box(-1.0, 1.0, (1,))
 
     RF_MODEL_DEFAULTS: ModelConfigDict = {
-                                            'kernel_representation': 'nystrom',
-                                            'random_feature_dim': 256,
-                                          'sigma': 0,
-                                          'learn_rf': False,
-                                          'dynamics_type': 'Pendubot',
-                                          'obs_space_low': obs_space.low.tolist(),
-                                          'obs_space_high': obs_space.high.tolist(),
-                                          'obs_space_dim': obs_space.shape,
-                                          'dynamics_parameters': {
-                                              'stabilizing_target': torch.tensor([0.0, 0.0, 0.5, 0.0, 0.0, 0.0]),
-                                              'reward_scale': 10.,
-                                              'reward_exponential': False,
-                                              'reward_type': 'lqr',
-                                              'theta_cal': 'sin_cos',
-                                              'noisy': False,
-                                              'noise_scale': 0.
-                                          },
-                                          'sin_input': True}
+        'kernel_representation': 'nystrom',
+        'random_feature_dim': 2048,
+        'sigma': 0,
+        'learn_rf': False,
+        'dynamics_type': 'Pendubot',
+        'obs_space_low': obs_space.low.tolist(),
+        'obs_space_high': obs_space.high.tolist(),
+        'obs_space_dim': obs_space.shape,
+        'dynamics_parameters': {
+            'stabilizing_target': torch.tensor([0.0, 0.0, 0.5, 0.0, 0.0, 0.0]),
+            'reward_scale': 10.,
+            'reward_exponential': False,
+            'reward_type': 'lqr',
+            'theta_cal': 'sin_cos',
+            'noisy': False,
+            'noise_scale': 0.
+        },
+        'sin_input': True}
 
     RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
-
 
     # Run in eager mode for value checking and debugging.
     # tf1.enable_eager_execution()
