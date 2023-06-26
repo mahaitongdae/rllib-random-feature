@@ -95,6 +95,7 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
 
         K_m1 = self.get_kernel_matrix(self.nystrom_samples1)
         [eig_vals1, S1] = np.linalg.eig(K_m1)  # numpy linalg eig doesn't produce negative eigenvalues... (unlike torch)
+        eig_vals1 = np.clip(eig_vals1, 1e-6, np.inf)
         self.eig_vals1 = torch.from_numpy(eig_vals1).float()
         self.S1 = torch.from_numpy(S1).float()
         self.nystrom_samples1 = torch.from_numpy(self.nystrom_samples1)

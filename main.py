@@ -192,7 +192,8 @@ def train_rfsac(args):
 
     elif args.algo == 'SAC':
         config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=4)
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS,
+                                         optimization_config={"actor_learning_rate": 1.,}).rollouts(num_rollout_workers=4)
 
     # if args.eval:
     eval_env_config = copy.deepcopy(ENV_CONFIG)
@@ -247,7 +248,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
-    parser.add_argument("--comments", default='change to uniform', type=str)
+    parser.add_argument("--comments", default='change actor lr', type=str)
     parser.add_argument("--restore_dir",default=None, type=str)
     parser.add_argument("--kernel_representation", default='nystrom', type=str)
     args = parser.parse_args()
