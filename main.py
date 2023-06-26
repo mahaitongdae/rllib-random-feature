@@ -1,5 +1,5 @@
 import gymnasium
-from ray.rllib.algorithms.sac import SACConfig, RFSACConfig
+from ray.rllib.algorithms.sac import SACConfig
 from ray.tune.logger import pretty_print
 from ray.rllib.models import ModelCatalog
 from ray.rllib.utils.typing import ModelConfigDict
@@ -156,7 +156,7 @@ def env_creator_pendubot(env_config):
         return env
 
 def train_rfsac(args):
-    # ray.init(num_cpus=4, local_mode=True)
+    ray.init(num_cpus=1)
 
 
     register_env('Quadrotor2D-v1', env_creator)
@@ -208,7 +208,7 @@ def train_rfsac(args):
         evaluation_interval=10,
         evaluation_duration=10,
         # evaluation_num_workers=1,
-        evaluation_config=RFSACConfig.overrides(render_env=False,
+        evaluation_config=SACConfig.overrides(render_env=False,
                                                 env_config = eval_env_config
                                                 )
         )
@@ -239,7 +239,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--custom_model", default='random_feature_q', type=str, help="Choose model from following: nystrom_q, random_feature_q") #
-    parser.add_argument("--feature_dim", default=32768, type=int)
+    parser.add_argument("--feature_dim", default=2048, type=int)
     parser.add_argument("--env_id", default='Pendubot-v0', type=str)
     parser.add_argument("--algo", default='SAC', type=str)
     parser.add_argument("--reward_exp", default=True, type=bool)
