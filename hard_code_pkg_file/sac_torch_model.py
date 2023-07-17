@@ -86,6 +86,7 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
         self.dynamics_parameters = model_config.get('dynamics_parameters')
 
         # self.nystrom_samples1 = np.random.normal(np.zeros([3,]), np.array([0.3, 0.3, 0.3]), size=(self.feature_dim, s_dim))
+        np.random.seed(model_config.get('seed'))
         self.nystrom_samples1 = np.random.uniform(s_low, s_high, size=(self.feature_dim, s_dim))
 
         if self.sigma > 0.0:

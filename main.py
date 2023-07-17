@@ -169,7 +169,8 @@ def train_rfsac(args):
     RF_MODEL_DEFAULTS['dynamics_parameters'].update(ENV_CONFIG)
     RF_MODEL_DEFAULTS.update(ENV_CONFIG) # todo:not update twice
     RF_MODEL_DEFAULTS.update({'comments': args.comments,
-                              'kernel_representation': args.kernel_representation})
+                              'kernel_representation': args.kernel_representation,
+                              'seed':args.seed})
 
     register_env('Quadrotor2D-v1', env_creator)
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
@@ -180,20 +181,21 @@ def train_rfsac(args):
                                             args.env_id)  # from algorithm.py line 2212, Algorithm.__init__()
     env = env_creator_func(ENV_CONFIG)
     RF_MODEL_DEFAULTS.update({
-        'obs_space_high': env.observation_space.high.tolist(),
-        'obs_space_low': env.observation_space.low.tolist(),
+        'obs_space_high': np.clip(env.observation_space.high, -100., 100.).tolist(),
+        'obs_space_low': np.clip(env.observation_space.low, -100., 100.).tolist(), # in case of inf observation space
         'obs_space_dim': env.observation_space.shape,
     })
     del env
 
     if args.algo == 'RFSAC':
         config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=12) #
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=16) #
 
     elif args.algo == 'SAC':
         config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
             .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS,
-                                         optimization_config={"actor_learning_rate": 1.,}).rollouts(num_rollout_workers=4)
+                                         # optimization_config={"actor_learning_rate": 1.,},
+                                         ).rollouts(num_rollout_workers=4)
 
     # if args.eval:
     eval_env_config = copy.deepcopy(ENV_CONFIG)
@@ -204,9 +206,9 @@ def train_rfsac(args):
                             'reward_type': 'energy',
                             })
     config = config.evaluation(
-        # evaluation_parallel_to_training=True,
-        evaluation_interval=10,
-        evaluation_duration=10,
+        evaluation_parallel_to_training=True,
+        evaluation_interval=50,
+        evaluation_duration=50,
         evaluation_num_workers=1,
         evaluation_config=RFSACConfig.overrides(render_env=False,
                                                 env_config = eval_env_config
@@ -225,7 +227,7 @@ def train_rfsac(args):
         algo.restore(args.restore_dir)
         # /home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_02-16-18e5y0w4ou/checkpoint_000801
 
-    train_iter = 1601
+    train_iter = 1001
     for i in range(train_iter):
         result = algo.train()
         print(pretty_print(result))
@@ -241,10 +243,11 @@ if __name__ == "__main__":
     parser.add_argument("--random_feature_dim", default=512, type=int)
     parser.add_argument("--env_id", default='Pendulum-v1', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
-    parser.add_argument("--reward_exp", default=False, type=bool)
-    parser.add_argument("--reward_scale", default=1., type=float)
+    parser.add_argument("--reward_exp", default=True, type=bool)
+    parser.add_argument("--reward_scale", default=10., type=float)
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
+    parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
