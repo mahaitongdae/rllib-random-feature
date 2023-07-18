@@ -7,11 +7,11 @@ from typing import Dict, List, Optional
 from ray.rllib.models.catalog import ModelCatalog
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.rllib.utils.annotations import override
-from ray.rllib.utils.framework import try_import_torch
 from ray.rllib.utils.spaces.simplex import Simplex
 from ray.rllib.utils.typing import ModelConfigDict, TensorType, TensorStructType
 
-torch, nn = try_import_torch()
+import torch
+import torch.nn as nn
 
 
 class KernelRepresetationModel(TorchModelV2, nn.Module):
@@ -381,6 +381,7 @@ class RandomFeatureQModel(KernelRepresetationModel, TorchModelV2, nn.Module):
         KernelRepresetationModel.__init__(self, obs_space, action_space, num_outputs, model_config, name)
 
         # initialize Fournier random feature
+        torch.manual_seed(model_config.get('seed'))
         fourier_random_feature = nn.Linear(self.prev_layer_size, self.feature_dim)
         if self.sigma > 0:
             nn.init.normal_(fourier_random_feature.weight, std=1. / self.sigma)
@@ -433,6 +434,7 @@ class NystromSampleQModel(KernelRepresetationModel, TorchModelV2, nn.Module):
         else:
             self.kernel = lambda z: np.exp(-np.linalg.norm(z)**2/(2.))
 
+        np.random.seed(model_config.get('seed'))
         K_m1 = self.get_kernel_matrix(self.nystrom_samples1)
         [eig_vals1, S1] = np.linalg.eig(K_m1)  # numpy linalg eig doesn't produce negative eigenvalues... (unlike torch)
         self.eig_vals1 = torch.from_numpy(eig_vals1).float()

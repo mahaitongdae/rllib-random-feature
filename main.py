@@ -119,6 +119,14 @@ def env_creator(env_config):
     else:
         return TransformReward(env, lambda r: env_config.get('reward_scale') * r)
 
+def env_creator_pendulum(env_config):
+    env = gymnasium.make('Pendulum-v1')
+    if env_config.get('reward_exponential'):
+        env = TransformReward(env, lambda r: np.exp(env_config.get('reward_scale') * r))
+    else:
+        env = TransformReward(env, lambda r: env_config.get('reward_scale') * r)
+    return env
+
 def env_creator_cartpole(env_config):
     from gymnasium.envs.registration import register
 
@@ -156,12 +164,13 @@ def env_creator_pendubot(env_config):
         return env
 
 def train_rfsac(args):
-    ray.init(num_cpus=1)
+    ray.init(num_cpus=4, local_mode=True, include_dashboard=True)
 
 
     register_env('Quadrotor2D-v1', env_creator)
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
     register_env('Pendubot-v0', env_creator_pendubot)
+    register_env('Pendulum-v1', env_creator_pendulum)
 
     # update parameters
     custom_model_config.update({'feature_dim': args.feature_dim})
@@ -174,13 +183,14 @@ def train_rfsac(args):
     })
     custom_model_config.update(ENV_CONFIG)
     RF_MODEL_DEFAULTS.update({'comments': args.comments})
-    RF_MODEL_DEFAULTS.update({'custom_model': args.custom_model})
+    RF_MODEL_DEFAULTS.update({'custom_model': args.custom_model,
+                              'seed':args.seed})
 
     env_creator_func = _global_registry.get(ENV_CREATOR, args.env_id) # from algorithm.py line 2212, Algorithm.__init__()
     env = env_creator_func(ENV_CONFIG)
     custom_model_config.update({
-        'obs_space_high': env.observation_space.high.tolist(),
-        'obs_space_low': env.observation_space.low.tolist(),
+        'obs_space_high': np.clip(env.observation_space.high, -100., 100.).tolist(),
+        'obs_space_low': np.clip(env.observation_space.low, -100., 100.).tolist(),
         'obs_space_dim': env.observation_space.shape,
     })
     del env
@@ -193,7 +203,7 @@ def train_rfsac(args):
     #
     # elif args.algo == 'SAC':
     config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-        .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=12)
+        .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=2)
 
     # if args.eval:
     eval_env_config = copy.deepcopy(ENV_CONFIG)
@@ -239,13 +249,14 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--custom_model", default='random_feature_q', type=str, help="Choose model from following: nystrom_q, random_feature_q") #
-    parser.add_argument("--feature_dim", default=2048, type=int)
-    parser.add_argument("--env_id", default='Pendubot-v0', type=str)
+    parser.add_argument("--feature_dim", default=512, type=int)
+    parser.add_argument("--env_id", default='Pendulum-v1', type=str)
     parser.add_argument("--algo", default='SAC', type=str)
     parser.add_argument("--reward_exp", default=True, type=bool)
     parser.add_argument("--reward_scale", default=10., type=float)
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
+    parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
