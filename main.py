@@ -72,6 +72,15 @@ class TransformTriangleObservationWrapper(gymnasium.ObservationWrapper):
 
         self.observation_space = gymnasium.spaces.Box(low=transformed_low, high=transformed_high, dtype=np.float32)
 
+    def observation(self, observation):
+        '''
+        transfer observations. We assume that the last two observations is the angle and angular velocity.
+        '''
+        theta = observation[-2]
+        sin_cos_theta = np.array([np.cos(theta), np.sin(theta)])
+        theta_dot = observation[-1:]
+        return np.hstack([observation[:-2], sin_cos_theta, theta_dot])
+
 class TransformDoubleTriangleObservationWrapper(gymnasium.ObservationWrapper):
 
     def __init__(self, env):
@@ -181,20 +190,19 @@ def train_rfsac(args):
                                             args.env_id)  # from algorithm.py line 2212, Algorithm.__init__()
     env = env_creator_func(ENV_CONFIG)
     RF_MODEL_DEFAULTS.update({
-        'obs_space_high': np.clip(env.observation_space.high, -100., 100.).tolist(),
-        'obs_space_low': np.clip(env.observation_space.low, -100., 100.).tolist(), # in case of inf observation space
+        'obs_space_high': np.clip(env.observation_space.high, -10., 10.).tolist(),
+        'obs_space_low': np.clip(env.observation_space.low, -10., 10.).tolist(), # in case of inf observation space
         'obs_space_dim': env.observation_space.shape,
     })
     del env
 
     if args.algo == 'RFSAC':
         config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=16) #
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=12) #
 
     elif args.algo == 'SAC':
         config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
             .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS,
-                                         # optimization_config={"actor_learning_rate": 1.,},
                                          ).rollouts(num_rollout_workers=4)
 
     # if args.eval:
@@ -227,7 +235,7 @@ def train_rfsac(args):
         algo.restore(args.restore_dir)
         # /home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_02-16-18e5y0w4ou/checkpoint_000801
 
-    train_iter = 1001
+    train_iter = 501
     for i in range(train_iter):
         result = algo.train()
         print(pretty_print(result))
@@ -240,8 +248,8 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=512, type=int)
-    parser.add_argument("--env_id", default='Pendulum-v1', type=str)
+    parser.add_argument("--random_feature_dim", default=2048, type=int)
+    parser.add_argument("--env_id", default='CartPoleContinuous-v0', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
     parser.add_argument("--reward_exp", default=True, type=bool)
     parser.add_argument("--reward_scale", default=10., type=float)
@@ -251,7 +259,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
-    parser.add_argument("--comments", default='change actor lr', type=str)
+    parser.add_argument("--comments", default='cartpole nystrom 2048 features', type=str)
     parser.add_argument("--restore_dir",default=None, type=str)
     parser.add_argument("--kernel_representation", default='nystrom', type=str)
     args = parser.parse_args()

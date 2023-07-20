@@ -1,3 +1,5 @@
+import os
+
 import gymnasium
 import ray
 from ray.rllib.algorithms.sac import SACConfig, sac, RFSACConfig
@@ -6,7 +8,7 @@ from ray.rllib.models import ModelCatalog, MODEL_DEFAULTS
 from sac_torch_random_feature_model import SACTorchRFModel
 from ray.rllib.utils.typing import ModelConfigDict
 from ray.rllib.policy.sample_batch import SampleBatch
-from ray.tune.registry import register_env
+from ray.tune.registry import register_env, ENV_CREATOR, _global_registry
 
 import os.path as osp
 import sys
@@ -37,7 +39,10 @@ RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 8192,
                                                               # 'stabilizing_target': [0.0, 0.0, 0.5, 0.0, 0.0, 0.0],
                                                               # 'reward_exponential': REWARD_EXP,
                                                               # 'reward_scale': REWARD_SCALE,
-                                                              }}
+                                                              },
+                                      'kernel_represetation': 'random_feature',
+                                      'seed': 0,
+                                      }
 
 RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
 
@@ -46,7 +51,7 @@ ENV_CONFIG = {'sin_input': True,
               'reward_scale': 10.,
               'reward_type' : 'energy',
               'theta_cal': 'sin_cos',
-              'render': False
+              'render': False,
               }
 
 RF_MODEL_DEFAULTS.update(ENV_CONFIG)
@@ -63,13 +68,22 @@ def env_creator(env_config):
     else:
         return TransformReward(env, lambda r: env_config.get('reward_scale') * r)
 
+def env_creator_pendulum(env_config):
+    env = gymnasium.make('Pendulum-v1')
+    if env_config.get('reward_exponential'):
+        env = TransformReward(env, lambda r: np.exp(env_config.get('reward_scale') * r))
+    else:
+        env = TransformReward(env, lambda r: env_config.get('reward_scale') * r)
+    return env
+
 def env_creator_cartpole(env_config):
     from gymnasium.envs.registration import register
 
     register(id='CartPoleContinuous-v0',
              entry_point='envs:CartPoleEnv',
              max_episode_steps=300)
-    env = gymnasium.make('CartPoleContinuous-v0', render_mode='human') #
+    env = gymnasium.make('CartPoleContinuous-v0',
+                         render_mode='human' if env_config.get('render') else None) #
     if env_config.get('reward_exponential'):
         env = TransformReward(env, lambda r: np.exp(r))
     if env_config.get('sin_input'):
@@ -102,53 +116,31 @@ def env_creator_pendubot(env_config):
 
 def train_rfsac(args):
     ray.init(local_mode=True)
-    RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
-    RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
-    ENV_CONFIG.update({
-                        'reward_exponential':args.reward_exp,
-                        'reward_type': args.reward_type,
-                        'reward_scale': args.reward_scale,
-                        'theta_cal': args.theta_cal
-                      })
-    RF_MODEL_DEFAULTS['dynamics_parameters'].update(ENV_CONFIG)
-    RF_MODEL_DEFAULTS.update(ENV_CONFIG) # todo:not update twice
-    RF_MODEL_DEFAULTS.update({'comments': args.comments})
+    exp_path = os.path.dirname(args.restore_path)
+    json_path = os.path.join(exp_path, 'model_params.json')
+    algo = exp_path.split('/')[-1].split('_')[0]
+    env_id = exp_path.split('/')[-1].split('_')[1]
+    with open(json_path) as json_file:
+        model_params = json.load(json_file)
+    RF_MODEL_DEFAULTS.update(model_params)
+    for key, value in model_params.items():
+        if key in ENV_CONFIG.keys():
+            ENV_CONFIG.update({key: value})
 
     register_env('Quadrotor2D-v1', env_creator)
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
     register_env('Pendubot-v0', env_creator_pendubot)
+    register_env('Pendulum-v1', env_creator_pendulum)
 
-    if args.algo == 'RFSAC':
-        config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
+    if algo == 'RFSAC':
+        config = RFSACConfig().environment(env=env_id, env_config=ENV_CONFIG)\
             .framework("torch") .training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1)
 
-    elif args.algo == 'SAC':
-        config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
+    elif algo == 'SAC':
+        config = SACConfig().environment(env=env_id, env_config=ENV_CONFIG)\
             .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1)
 
-    if args.eval:
-        # eval_config = RFSACConfig.overrides(env_config=ENV_CONFIG)
-        config = config.evaluation(
-            # evaluation_parallel_to_training=True,
-            evaluation_interval=10,
-            evaluation_duration=10,
-            evaluation_num_workers=1,
-            evaluation_config=RFSACConfig.overrides(render_env=False,
-                                                    env_config={
-                                                        'sin_input': True,
-                                                        'reward_exponential': True,
-                                                        'reward_scale': 10.,
-                                                        'reward_type': 'energy',
-                                                    }
-                                                    )
-        )
-
     algo = config.build()
-
-    # The built-in param storage does not work
-    model_param_file_path = osp.join(algo.logdir, 'model_params.json')
-    with open(model_param_file_path, 'w') as fp:
-        json.dump(RF_MODEL_DEFAULTS, fp, indent=2)
 
     # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3/checkpoint_000451')
     # algo.restore('/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-51-17i_cw3m6f/checkpoint_000451')
@@ -166,7 +158,7 @@ def train_rfsac(args):
                        'theta_cal': 'sin_cos',
                        'noisy': True,
                        'noise_scale': 0.5,
-                       'render': False
+                       'render': True
                        }
 
     n = 4
@@ -178,8 +170,10 @@ def train_rfsac(args):
         policy = algo.workers.local_worker().policy_map['default_policy']
         returns = []
 
-        env = env_creator_pendubot(eval_env_config)
-        for eval_epis in range(10):
+        env_creator_func = _global_registry.get(ENV_CREATOR,
+                                                env_id)  # from algorithm.py line 2212, Algorithm.__init__()
+        env = env_creator_func(eval_env_config)
+        for eval_epis in range(50):
             ret = 0.
             obs, _ = env.reset(seed=eval_epis)
             for _ in range(200):
@@ -273,21 +267,24 @@ def train_rfsac(args):
         #     plt.savefig('cartpole_swingup_ol.png', bbox_inches='tight')
         plt.show()
 
-    plot_data()
+    # plot_data() # for plot comparison data in pendubot
+
+    run_simulation_for_perf(args.restore_path)
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=32768, type=int)
-    parser.add_argument("--env_id", default='Pendubot-v0', type=str)
-    parser.add_argument("--algo", default='RFSAC', type=str)
-    parser.add_argument("--reward_exp", default=True, type=str)
-    parser.add_argument("--eval", default=False, type=bool)
-    parser.add_argument("--reward_scale", default=10., type=float)
-    parser.add_argument("--reward_type", default='lqr', type=str)
-    parser.add_argument("--theta_cal", default='arctan', type=str)
-    parser.add_argument("--comments", default='train with lqr and eval with energy, both exp', type=str)
+    # parser.add_argument("--random_feature_dim", default=32768, type=int)
+    # parser.add_argument("--env_id", default='Pendubot-v0', type=str)
+    # parser.add_argument("--algo", default='RFSAC', type=str)
+    # parser.add_argument("--reward_exp", default=True, type=str)
+    # parser.add_argument("--eval", default=False, type=bool)
+    # parser.add_argument("--reward_scale", default=10., type=float)
+    # parser.add_argument("--reward_type", default='lqr', type=str)
+    # parser.add_argument("--theta_cal", default='arctan', type=str)
+    parser.add_argument("--restore_path", default='/home/mht/ray_results/RFSAC_Pendulum-v1_2023-07-18_11-33-35dovuxm6k/checkpoint_001001', type=str)
+    # parser.add_argument("--comments", default='train with lqr and eval with energy, both exp', type=str)
     args = parser.parse_args()
     train_rfsac(args)
     # env = env_creator_cartpole(ENV_CONFIG)
