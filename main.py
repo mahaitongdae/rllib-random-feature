@@ -35,7 +35,8 @@ RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 8192,
                                                               # 'stabilizing_target': [0.0, 0.0, 0.5, 0.0, 0.0, 0.0],
                                                               # 'reward_exponential': REWARD_EXP,
                                                               # 'reward_scale': REWARD_SCALE,
-                                                              }}
+                                                              },
+                                      'restore_dir': None}
 
 RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
 
@@ -167,19 +168,21 @@ def env_creator_pendubot(env_config):
 
 def train_rfsac(args):
     # ray.init(num_cpus=4, local_mode=True)
-    RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
+    # RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
     RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
     ENV_CONFIG.update({
-                        'reward_exponential':args.reward_exp,
+                        'reward_exponential':args.reward_exponential,
                         'reward_type': args.reward_type,
                         'reward_scale': args.reward_scale,
                         'theta_cal': args.theta_cal
                       })
     RF_MODEL_DEFAULTS['dynamics_parameters'].update(ENV_CONFIG)
     RF_MODEL_DEFAULTS.update(ENV_CONFIG) # todo:not update twice
-    RF_MODEL_DEFAULTS.update({'comments': args.comments,
-                              'kernel_representation': args.kernel_representation,
-                              'seed':args.seed})
+    # RF_MODEL_DEFAULTS.update({'comments': args.comments,
+    #                           'kernel_representation': args.kernel_representation,
+    #                           'seed':args.seed})
+
+    RF_MODEL_DEFAULTS.update(vars(args))
 
     register_env('Quadrotor2D-v1', env_creator)
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
@@ -235,12 +238,12 @@ def train_rfsac(args):
         algo.restore(args.restore_dir)
         # /home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_02-16-18e5y0w4ou/checkpoint_000801
 
-    train_iter = 501
+    train_iter = args.train_iter if args.train_iter else 1001
     for i in range(train_iter):
         result = algo.train()
         print(pretty_print(result))
 
-        if i % 50 == 0:
+        if i % 500 == 0:
             checkpoint_dir = algo.save()
             print(f"Checkpoint saved in directory {checkpoint_dir}")
 
@@ -248,20 +251,21 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=2048, type=int)
+    parser.add_argument("--random_feature_dim", default=512, type=int)
     parser.add_argument("--env_id", default='CartPoleContinuous-v0', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
-    parser.add_argument("--reward_exp", default=True, type=bool)
+    parser.add_argument("--reward_exponential", default=True, type=bool)
     parser.add_argument("--reward_scale", default=10., type=float)
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
-    parser.add_argument("--seed", default=0, type=int)
+    parser.add_argument("--seed", default=1, type=int)
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
-    parser.add_argument("--comments", default='cartpole nystrom 2048 features', type=str)
+    parser.add_argument("--comments", default='test using parameter to store samples', type=str)
     parser.add_argument("--restore_dir",default=None, type=str)
     parser.add_argument("--kernel_representation", default='nystrom', type=str)
+    parser.add_argument("--train_iter", default=3001, type=int)
     args = parser.parse_args()
     train_rfsac(args)
     # env_creator_func = _global_registry.get(ENV_CREATOR,
