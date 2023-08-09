@@ -12,6 +12,7 @@ from ray.rllib.utils.annotations import override
 from ray.rllib.utils.framework import try_import_torch
 from ray.rllib.utils.spaces.simplex import Simplex
 from ray.rllib.utils.typing import ModelConfigDict, TensorType, TensorStructType
+from ray.tune.registry import _global_registry, ENV_CREATOR
 
 torch, nn = try_import_torch()
 
@@ -102,10 +103,14 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
         if model_config.get('restore_dir') is None:
             # only sample when not restore from existing
             print("start nystrom sample")
+            # env_creator_func = _global_registry.get(ENV_CREATOR,
+            #                                         model_config.get('env_id'))  # from algorithm.py line 2212, Algorithm.__init__()
+            # env = env_creator_func(ENV_CONFIG)
             nystrom_samples1 = np.random.uniform(s_low, s_high, size=(self.feature_dim, s_dim))
-            K_m1 = self.get_kernel_matrix(self.nystrom_samples1)
+            K_m1 = self.get_kernel_matrix(nystrom_samples1)
             [eig_vals1, S1] = np.linalg.eig(K_m1)  # numpy linalg eig doesn't produce negative eigenvalues... (unlike torch)
-            eig_vals1 = np.clip(eig_vals1, 1e-6, np.inf)
+            eig_vals1 = np.clip(eig_vals1, 1e-8, np.inf)
+            print(eig_vals1)
             self.eig_vals1 = nn.parameter.Parameter(data=torch.from_numpy(eig_vals1).float(), requires_grad=False)
             self.S1 = nn.parameter.Parameter(data=torch.from_numpy(S1).float(), requires_grad=False)
             self.nystrom_samples1 = nn.parameter.Parameter(data=torch.from_numpy(nystrom_samples1), requires_grad=False)
@@ -139,7 +144,7 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
         x1 = self.nystrom_samples1.unsqueeze(0) - obs.unsqueeze(1)
         K_x1 = torch.exp(-torch.linalg.norm(x1, axis=2) ** 2 / 2).float()
         phi_all1 = (K_x1 @ (self.S1)) @ torch.diag((self.eig_vals1 + 1e-8) ** (-0.5))
-        # phi_all1 = phi_all1 * self.n_neurons * 5  # todo: the scaling matters?
+        phi_all1 = phi_all1 * self.n_neurons * 5  # todo: the scaling matters?
         phi_all1 = phi_all1.to(torch.float32)
 
         logits = self.output1(phi_all1)

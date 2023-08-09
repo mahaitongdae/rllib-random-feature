@@ -167,7 +167,7 @@ def env_creator_pendubot(env_config):
         return env
 
 def train_rfsac(args):
-    # ray.init(num_cpus=4, local_mode=True)
+    # ray.init(local_mode=True)
     # RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
     RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
     ENV_CONFIG.update({
@@ -252,7 +252,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--random_feature_dim", default=512, type=int)
-    parser.add_argument("--env_id", default='CartPoleContinuous-v0', type=str)
+    parser.add_argument("--env_id", default='Pendulum-v1', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
     parser.add_argument("--reward_exponential", default=True, type=bool)
     parser.add_argument("--reward_scale", default=10., type=float)
