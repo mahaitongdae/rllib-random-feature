@@ -16,7 +16,7 @@ try:
     from safe_control_gym.utils.configuration import ConfigFactory
     from safe_control_gym.utils.registration import make, register
 except:
-    pass
+    print('safety gym import error')
 from gymnasium.wrappers import TransformReward
 import argparse
 import numpy as np
@@ -32,7 +32,7 @@ RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 8192,
                                       'learn_rf': False,
                                       'dynamics_type': 'Quadrotor2D', # Pendulum, Quadrotor2D
                                       'dynamics_parameters': {
-                                                              # 'stabilizing_target': [0.0, 0.0, 0.5, 0.0, 0.0, 0.0],
+                                                              'stabilizing_target': [0.0, 0.0, 0.5, 0.0, 0.0, 0.0],
                                                               # 'reward_exponential': REWARD_EXP,
                                                               # 'reward_scale': REWARD_SCALE,
                                                               },
@@ -167,7 +167,7 @@ def env_creator_pendubot(env_config):
         return env
 
 def train_rfsac(args):
-    # ray.init(local_mode=True)
+    ray.init(num_cpus=16)
     # RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
     RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
     ENV_CONFIG.update({
@@ -201,7 +201,7 @@ def train_rfsac(args):
 
     if args.algo == 'RFSAC':
         config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=12) #
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=6) #
 
     elif args.algo == 'SAC':
         config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
@@ -241,7 +241,9 @@ def train_rfsac(args):
     train_iter = args.train_iter if args.train_iter else 1001
     for i in range(train_iter):
         result = algo.train()
-        print(pretty_print(result))
+        # print(pretty_print(result))
+        print(result['training_iteration'])
+        print(result['sampler_results']['episode_reward_mean'])
 
         if i % 500 == 0:
             checkpoint_dir = algo.save()
@@ -251,14 +253,14 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=512, type=int)
-    parser.add_argument("--env_id", default='Pendulum-v1', type=str)
+    parser.add_argument("--random_feature_dim", default=8192, type=int)
+    parser.add_argument("--env_id", default='Quadrotor2D-v1', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
     parser.add_argument("--reward_exponential", default=True, type=bool)
     parser.add_argument("--reward_scale", default=10., type=float)
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
-    parser.add_argument("--seed", default=1, type=int)
+    parser.add_argument("--seed", default=3, type=int)
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)

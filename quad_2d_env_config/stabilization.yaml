@@ -3,7 +3,7 @@ quadrotor_config:
   info_in_reset: True
   ctrl_freq: 60
   pyb_freq: 240
-  gui: True
+  gui: False
   physics: pyb
   quad_type: 2
   normalized_rl_action_space: True
@@ -59,7 +59,7 @@ quadrotor_config:
 
   episode_len_sec: 3
   cost: rl_reward
-  rew_exponential: False
+  rew_exponential: True
   done_on_out_of_bound: True
 
   done_on_violation: False
