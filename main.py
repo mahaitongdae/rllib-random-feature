@@ -251,8 +251,8 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=512, type=int)
-    parser.add_argument("--env_id", default='Pendulum-v1', type=str)
+    parser.add_argument("--random_feature_dim", default=2048, type=int)
+    parser.add_argument("--env_id", default='CartPoleContinuous-v0', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
     parser.add_argument("--reward_exponential", default=True, type=bool)
     parser.add_argument("--reward_scale", default=10., type=float)

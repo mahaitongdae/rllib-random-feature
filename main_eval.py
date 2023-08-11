@@ -57,6 +57,7 @@ ENV_CONFIG = {'sin_input': True,
 RF_MODEL_DEFAULTS.update(ENV_CONFIG)
 RF_MODEL_DEFAULTS.get('dynamics_parameters').update(ENV_CONFIG)
 
+
 def env_creator(env_config):
     CONFIG_FACTORY = ConfigFactory()
     CONFIG_FACTORY.parser.set_defaults(overrides=['./quad_2d_env_config/stabilization.yaml'])
@@ -116,13 +117,14 @@ def env_creator_pendubot(env_config):
 
 def train_rfsac(args):
     ray.init(local_mode=True)
-    exp_path = os.path.dirname(args.restore_path)
+    exp_path = os.path.dirname(args.restore_dir)
     json_path = os.path.join(exp_path, 'model_params.json')
     algo = exp_path.split('/')[-1].split('_')[0]
     env_id = exp_path.split('/')[-1].split('_')[1]
     with open(json_path) as json_file:
         model_params = json.load(json_file)
     RF_MODEL_DEFAULTS.update(model_params)
+    RF_MODEL_DEFAULTS.update({'restore_dir': args.restore_dir})
     for key, value in model_params.items():
         if key in ENV_CONFIG.keys():
             ENV_CONFIG.update({key: value})
@@ -131,10 +133,25 @@ def train_rfsac(args):
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
     register_env('Pendubot-v0', env_creator_pendubot)
     register_env('Pendulum-v1', env_creator_pendulum)
+    eval_env_config = {'sin_input': True,
+                       'reward_exponential': False,
+                       'reward_scale': 1.,
+                       'reward_type': 'energy',
+                       'theta_cal': 'sin_cos',
+                       'noisy': False,
+                       'noise_scale': 0.5,
+                       'render': True
+                       }
 
     if algo == 'RFSAC':
         config = RFSACConfig().environment(env=env_id, env_config=ENV_CONFIG)\
-            .framework("torch") .training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1)
+            .framework("torch")\
+            .training(q_model_config=RF_MODEL_DEFAULTS)\
+            .rollouts(num_rollout_workers=1, create_env_on_local_worker=True)\
+            .evaluation( evaluation_num_workers=1,
+                        evaluation_duration=50,
+                        evaluation_config=RFSACConfig.overrides(render_env=False,
+                                                env_config = eval_env_config))
 
     elif algo == 'SAC':
         config = SACConfig().environment(env=env_id, env_config=ENV_CONFIG)\
@@ -151,15 +168,7 @@ def train_rfsac(args):
     #     '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-19_12-27-51d40yaq_b/checkpoint_001501') # lqr non noisy
     # algo.restore(
     #     '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_00-44-0154jj9f05/checkpoint_001502')  # lqr noisy
-    eval_env_config = {'sin_input': True,
-                       'reward_exponential': False,
-                       'reward_scale': 1.,
-                       'reward_type': 'energy',
-                       'theta_cal': 'sin_cos',
-                       'noisy': True,
-                       'noise_scale': 0.5,
-                       'render': True
-                       }
+
 
     n = 4
     m = 1
@@ -168,14 +177,16 @@ def train_rfsac(args):
     def run_simulation_for_perf(path):
         algo.restore(path)
         policy = algo.workers.local_worker().policy_map['default_policy']
+        # algo.evaluate()
+        algo.workers.local_worker().input_reader.next()
         returns = []
 
         env_creator_func = _global_registry.get(ENV_CREATOR,
                                                 env_id)  # from algorithm.py line 2212, Algorithm.__init__()
         env = env_creator_func(eval_env_config)
-        for eval_epis in range(50):
+        for eval_epis in range(100):
             ret = 0.
-            obs, _ = env.reset(seed=eval_epis)
+            obs, _ = env.reset() # seed=eval_epis
             for _ in range(200):
                 input_ = np.array([obs])
                 # Note that for PyTorch, you will have to provide torch tensors here.
@@ -269,7 +280,7 @@ def train_rfsac(args):
 
     # plot_data() # for plot comparison data in pendubot
 
-    run_simulation_for_perf(args.restore_path)
+    run_simulation_for_perf(args.restore_dir)
 
 
 if __name__ == "__main__":
@@ -283,7 +294,7 @@ if __name__ == "__main__":
     # parser.add_argument("--reward_scale", default=10., type=float)
     # parser.add_argument("--reward_type", default='lqr', type=str)
     # parser.add_argument("--theta_cal", default='arctan', type=str)
-    parser.add_argument("--restore_path", default='/home/mht/ray_results/RFSAC_Pendulum-v1_2023-07-18_11-33-35dovuxm6k/checkpoint_001001', type=str)
+    parser.add_argument("--restore_dir", default='/home/mht/ray_results/RFSAC_Pendulum-v1_2023-08-09_00-18-08uvybzro5/checkpoint_003001', type=str)
     # parser.add_argument("--comments", default='train with lqr and eval with energy, both exp', type=str)
     args = parser.parse_args()
     train_rfsac(args)
