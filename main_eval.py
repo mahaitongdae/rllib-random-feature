@@ -116,7 +116,7 @@ def env_creator_pendubot(env_config):
 
 def train_rfsac(args):
     ray.init(local_mode=True)
-    exp_path = os.path.dirname(args.restore_path)
+    exp_path = os.path.dirname(args.restore_dir)
     json_path = os.path.join(exp_path, 'model_params.json')
     algo = exp_path.split('/')[-1].split('_')[0]
     env_id = exp_path.split('/')[-1].split('_')[1]
@@ -136,17 +136,15 @@ def train_rfsac(args):
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
     register_env('Pendubot-v0', env_creator_pendubot)
     register_env('Pendulum-v1', env_creator_pendulum)
-
     eval_env_config = {'sin_input': True,
                        'reward_exponential': False,
                        'reward_scale': 1.,
                        'reward_type': 'energy',
                        'theta_cal': 'sin_cos',
                        'noisy': False,
-                       'noise_scale': 0.,
+                       'noise_scale': 0.5,
                        'render': True
                        }
-
 
     if algo == 'RFSAC':
         config = RFSACConfig().environment(env=env_id, env_config=eval_env_config)\
@@ -339,7 +337,7 @@ def train_rfsac(args):
 
     # plot_data() # for plot comparison data in pendubot
 
-    run_simulation_for_perf(args.restore_path)
+    run_simulation_for_perf(args.restore_dir)
 
 
 if __name__ == "__main__":
@@ -353,7 +351,7 @@ if __name__ == "__main__":
     # parser.add_argument("--reward_scale", default=10., type=float)
     # parser.add_argument("--reward_type", default='lqr', type=str)
     # parser.add_argument("--theta_cal", default='arctan', type=str)
-    parser.add_argument("--restore_path", default='/home/mht/Dropbox (Harvard University)/data/successful_results_rllib/SAC_Pendulum-v1/checkpoint_000496', type=str)
+    parser.add_argument("--restore_dir", default='/home/mht/ray_results/RFSAC_Pendulum-v1_2023-08-09_00-18-08uvybzro5/checkpoint_003001', type=str)
     # parser.add_argument("--comments", default='train with lqr and eval with energy, both exp', type=str)
     args = parser.parse_args()
     train_rfsac(args)

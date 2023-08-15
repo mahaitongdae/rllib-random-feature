@@ -16,7 +16,7 @@ try:
     from safe_control_gym.utils.configuration import ConfigFactory
     from safe_control_gym.utils.registration import make, register
 except:
-    print('safety gym import error')
+    pass
 from gymnasium.wrappers import TransformReward
 import argparse
 import numpy as np
@@ -201,7 +201,7 @@ def train_rfsac(args):
 
     if args.algo == 'RFSAC':
         config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=6) #
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=12) #
 
     elif args.algo == 'SAC':
         config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
@@ -241,9 +241,7 @@ def train_rfsac(args):
     train_iter = args.train_iter if args.train_iter else 1001
     for i in range(train_iter):
         result = algo.train()
-        # print(pretty_print(result))
-        print(result['training_iteration'])
-        print(result['sampler_results']['episode_reward_mean'])
+        print(pretty_print(result))
 
         if i % 500 == 0:
             checkpoint_dir = algo.save()
@@ -253,14 +251,14 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=8192, type=int)
-    parser.add_argument("--env_id", default='Quadrotor2D-v1', type=str)
+    parser.add_argument("--random_feature_dim", default=512, type=int)
+    parser.add_argument("--env_id", default='Pendulum-v1', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
     parser.add_argument("--reward_exponential", default=True, type=bool)
     parser.add_argument("--reward_scale", default=10., type=float)
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
-    parser.add_argument("--seed", default=3, type=int)
+    parser.add_argument("--seed", default=1, type=int)
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
