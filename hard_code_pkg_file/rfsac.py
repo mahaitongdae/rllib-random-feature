@@ -361,14 +361,14 @@ class RFSAC(DQN):
             raise NotImplementedError
 
 
-# Deprecated: Use ray.rllib.algorithms.sac.SACConfig instead!
+# Deprecated: Use ray.rllib.algorithms.algo.SACConfig instead!
 class _deprecated_default_config(dict):
     def __init__(self):
         super().__init__(RFSACConfig().to_dict())
 
     @Deprecated(
-        old="ray.rllib.algorithms.sac.sac::DEFAULT_CONFIG",
-        new="ray.rllib.algorithms.sac.sac::SACConfig(...)",
+        old="ray.rllib.algorithms.algo.algo::DEFAULT_CONFIG",
+        new="ray.rllib.algorithms.algo.algo::SACConfig(...)",
         error=True,
     )
     def __getitem__(self, item):

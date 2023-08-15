@@ -2,7 +2,7 @@ import os
 
 import gymnasium
 import ray
-from ray.rllib.algorithms.sac import SACConfig, sac, RFSACConfig
+from ray.rllib.algorithms.sac import SACConfig, RFSACConfig
 from ray.tune.logger import pretty_print
 from ray.rllib.models import ModelCatalog, MODEL_DEFAULTS
 from sac_torch_random_feature_model import SACTorchRFModel
@@ -120,27 +120,56 @@ def train_rfsac(args):
     json_path = os.path.join(exp_path, 'model_params.json')
     algo = exp_path.split('/')[-1].split('_')[0]
     env_id = exp_path.split('/')[-1].split('_')[1]
-    with open(json_path) as json_file:
-        model_params = json.load(json_file)
-    RF_MODEL_DEFAULTS.update(model_params)
-    for key, value in model_params.items():
-        if key in ENV_CONFIG.keys():
-            ENV_CONFIG.update({key: value})
+    RF_MODEL_DEFAULTS.update({'restore_dir': args.restore_path})
+    try:
+        with open(json_path) as json_file:
+            model_params = json.load(json_file)
+        RF_MODEL_DEFAULTS.update(model_params)
+
+        for key, value in model_params.items():
+            if key in ENV_CONFIG.keys():
+                ENV_CONFIG.update({key: value})
+    except:
+        pass
 
     register_env('Quadrotor2D-v1', env_creator)
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
     register_env('Pendubot-v0', env_creator_pendubot)
     register_env('Pendulum-v1', env_creator_pendulum)
 
+    eval_env_config = {'sin_input': True,
+                       'reward_exponential': False,
+                       'reward_scale': 1.,
+                       'reward_type': 'energy',
+                       'theta_cal': 'sin_cos',
+                       'noisy': False,
+                       'noise_scale': 0.,
+                       'render': True
+                       }
+
+
     if algo == 'RFSAC':
-        config = RFSACConfig().environment(env=env_id, env_config=ENV_CONFIG)\
-            .framework("torch") .training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1)
+        config = RFSACConfig().environment(env=env_id, env_config=eval_env_config)\
+            .framework("torch") .training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1,
+                                                                                     create_env_on_local_worker=True,
+                                                                                     create_env_on_driver = True,
+                                                                                     rollout_fragment_length=200)
+
 
     elif algo == 'SAC':
-        config = SACConfig().environment(env=env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1)
+        config = SACConfig().environment(env=env_id, env_config=eval_env_config)\
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1,
+                                                                                     create_env_on_local_worker=True,
+                                                                                    rollout_fragment_length=200
+                                                                                    )\
+        .evaluation(
+            # evaluation_num_workers=1,
+                    evaluation_duration=10)
 
     algo = config.build()
+    #.evaluation(evaluation_num_workers=1,
+                        #evaluation_duration=50,
+                        #evaluation_config=RFSACConfig.overrides(env_config=eval_env_config))
 
     # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3/checkpoint_000451')
     # algo.restore('/home/mht/ray_results/SAC_CartPoleContinuous-v0_2023-05-29_06-51-17i_cw3m6f/checkpoint_000451')
@@ -151,25 +180,57 @@ def train_rfsac(args):
     #     '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-19_12-27-51d40yaq_b/checkpoint_001501') # lqr non noisy
     # algo.restore(
     #     '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_00-44-0154jj9f05/checkpoint_001502')  # lqr noisy
-    eval_env_config = {'sin_input': True,
-                       'reward_exponential': False,
-                       'reward_scale': 1.,
-                       'reward_type': 'energy',
-                       'theta_cal': 'sin_cos',
-                       'noisy': True,
-                       'noise_scale': 0.5,
-                       'render': True
-                       }
+
 
     n = 4
     m = 1
 
 
-    def run_simulation_for_perf(path):
+    def run_simulation_for_perf(path, deterministic = False):
+        algo.restore(path)
+        # from ray.rllib.algorithms.sac.sac_torch_policy import _get_dist_class
+        # policy = algo.workers.local_worker().policy_map['default_policy']
+        # returns = []
+        # model = policy.model
+        # action_dist_class = _get_dist_class(policy, policy.config, policy.action_space)
+        # env_creator_func = _global_registry.get(ENV_CREATOR,
+        #                                         env_id)  # from algorithm.py line 2212, Algorithm.__init__()
+        # env = env_creator_func(eval_env_config)
+        # for eval_epis in range(50):
+        #     ret = 0.
+        #     obs, _ = env.reset(seed=eval_epis)
+        #     for _ in range(200):
+        #         input_ = np.array([obs])
+        #         # Note that for PyTorch, you will have to provide torch tensors here.
+        #         # if args.framework == "torch":
+        #         input_ = torch.from_numpy(input_)
+        #         input_dict = SampleBatch(obs=input_, _is_training=False)
+        #         # action, _, _ = policy.compute_actions_from_input_dict(input_dict=input_dict, explore=False)
+        #         model_out_t, _ = model(input_dict)
+        #         action_dist_inputs_t, _ = model.get_action_model_outputs(model_out_t)
+        #         action_dist_t = action_dist_class(action_dist_inputs_t, model)
+        #         policy_t = (
+        #             action_dist_t.sample()
+        #             if not deterministic
+        #             else action_dist_t.deterministic_sample()
+        #         )
+        #         action = policy_t.detach().clone().numpy()
+        #         obs, reward, terminated, done, info = env.step(action[0])
+        #         ret += reward
+        #     print(ret)
+        #     returns.append(ret)
+        # print("{:.3f} $\pm$ {:.3f}".format(np.mean(returns), np.std(returns)))
+        results = algo.evaluate()
+        print(results)
+
+    def evaluate_q(path, deterministic=True):
+        from ray.rllib.algorithms.sac.sac_torch_policy import _get_dist_class
         algo.restore(path)
         policy = algo.workers.local_worker().policy_map['default_policy']
-        returns = []
-
+        model = policy.model
+        action_dist_class = _get_dist_class(policy, policy.config, policy.action_space)
+        a = 1
+        obses, actions = [], []
         env_creator_func = _global_registry.get(ENV_CREATOR,
                                                 env_id)  # from algorithm.py line 2212, Algorithm.__init__()
         env = env_creator_func(eval_env_config)
@@ -182,13 +243,22 @@ def train_rfsac(args):
                 # if args.framework == "torch":
                 input_ = torch.from_numpy(input_)
                 input_dict = SampleBatch(obs=input_, _is_training=False)
-                action, _, _ = policy.compute_actions_from_input_dict(input_dict=input_dict, explore=False)
-                obs, reward, terminated, done, info = env.step(action[0])
-                ret += reward
-            print(ret)
-            returns.append(ret)
-        print("{:.3f} $\pm$ {:.3f}".format(np.mean(returns), np.std(returns)))
+                model_out_t = model(input_dict)
+                # action, _, _ = policy.compute_actions_from_input_dict(input_dict=input_dict, explore=False)
+                action_dist_inputs_t, _ = model.get_action_model_outputs(model_out_t)
+                action_dist_t = action_dist_class(action_dist_inputs_t, model)
+                policy_t = (
+                    action_dist_t.sample()
+                    if not deterministic
+                    else action_dist_t.deterministic_sample()
+                )
 
+                obs, reward, terminated, done, info = env.step(policy_t[0])
+                obses.append(input_)
+                actions.append(policy_t)
+
+        input_dict = SampleBatch(obs=obses, _is_training=False)
+        model_out = model(input_dict)
 
     def run_simulation_to_plot(path, N = 200, ):
         s = np.zeros((N + 1, n))
@@ -283,7 +353,7 @@ if __name__ == "__main__":
     # parser.add_argument("--reward_scale", default=10., type=float)
     # parser.add_argument("--reward_type", default='lqr', type=str)
     # parser.add_argument("--theta_cal", default='arctan', type=str)
-    parser.add_argument("--restore_path", default='/home/mht/ray_results/RFSAC_Pendulum-v1_2023-07-18_11-33-35dovuxm6k/checkpoint_001001', type=str)
+    parser.add_argument("--restore_path", default='/home/mht/Dropbox (Harvard University)/data/successful_results_rllib/SAC_Pendulum-v1/checkpoint_000496', type=str)
     # parser.add_argument("--comments", default='train with lqr and eval with energy, both exp', type=str)
     args = parser.parse_args()
     train_rfsac(args)

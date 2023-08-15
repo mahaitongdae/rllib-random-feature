@@ -1,6 +1,6 @@
 import gymnasium
 import ray
-from ray.rllib.algorithms.sac import SACConfig, sac, RFSACConfig
+from ray.rllib.algorithms.sac import SACConfig, RFSACConfig
 from ray.tune.logger import pretty_print
 from ray.rllib.models import ModelCatalog, MODEL_DEFAULTS
 from sac_torch_random_feature_model import SACTorchRFModel
@@ -167,7 +167,7 @@ def env_creator_pendubot(env_config):
         return env
 
 def train_rfsac(args):
-    ray.init(num_cpus=16)
+    # ray.init(local_mode=True)
     # RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
     RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
     ENV_CONFIG.update({
