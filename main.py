@@ -3,7 +3,7 @@ import ray
 from ray.rllib.algorithms.sac import SACConfig, RFSACConfig
 from ray.tune.logger import pretty_print
 from ray.rllib.models import ModelCatalog, MODEL_DEFAULTS
-from sac_torch_random_feature_model import SACTorchRFModel
+# from sac_torch_random_feature_model import SACTorchRFModel
 from ray.rllib.utils.typing import ModelConfigDict
 from ray.tune.registry import register_env, ENV_CREATOR, _global_registry
 import ray
@@ -25,7 +25,7 @@ import copy
 
 from copy import deepcopy
 
-ModelCatalog.register_custom_model("sac_rf_model", SACTorchRFModel)
+# ModelCatalog.register_custom_model("sac_rf_model", SACTorchRFModel)
 
 RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 8192,
                                       'sigma': 0,
@@ -206,7 +206,7 @@ def train_rfsac(args):
     elif args.algo == 'SAC':
         config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
             .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS,
-                                         ).rollouts(num_rollout_workers=4)
+                                         ).rollouts(num_rollout_workers=12)
 
     # if args.eval:
     eval_env_config = copy.deepcopy(ENV_CONFIG)
@@ -253,7 +253,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--random_feature_dim", default=512, type=int)
     parser.add_argument("--env_id", default='Pendulum-v1', type=str)
-    parser.add_argument("--algo", default='RFSAC', type=str)
+    parser.add_argument("--algo", default='SAC', type=str)
     parser.add_argument("--reward_exponential", default=True, type=bool)
     parser.add_argument("--reward_scale", default=10., type=float)
     parser.add_argument("--noisy", default=False, type=bool)
@@ -264,8 +264,8 @@ if __name__ == "__main__":
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
     parser.add_argument("--comments", default='test using parameter to store samples', type=str)
     parser.add_argument("--restore_dir",default=None, type=str)
-    parser.add_argument("--kernel_representation", default='nystrom', type=str)
-    parser.add_argument("--train_iter", default=3001, type=int)
+    parser.add_argument("--kernel_representation", default='random_feature', type=str)
+    parser.add_argument("--train_iter", default=1001, type=int)
     args = parser.parse_args()
     train_rfsac(args)
     # env_creator_func = _global_registry.get(ENV_CREATOR,

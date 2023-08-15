@@ -342,6 +342,9 @@ class RFSAC(DQN):
     def __init__(self, *args, **kwargs):
         self._allow_unknown_subkeys += ["policy_model_config", "q_model_config"]
         super().__init__(*args, **kwargs)
+        # if self.config.q_model_config.get('restore_dir') == None:
+        #     self.workers.local_worker().policy_map['default_policy'].model.q_net.get_nystrom_sample()
+        #     self.workers.sync_weights()
 
     @classmethod
     @override(DQN)
@@ -361,14 +364,14 @@ class RFSAC(DQN):
             raise NotImplementedError
 
 
-# Deprecated: Use ray.rllib.algorithms.algo.SACConfig instead!
+# Deprecated: Use ray.rllib.algorithms.sac.SACConfig instead!
 class _deprecated_default_config(dict):
     def __init__(self):
         super().__init__(RFSACConfig().to_dict())
 
     @Deprecated(
-        old="ray.rllib.algorithms.algo.algo::DEFAULT_CONFIG",
-        new="ray.rllib.algorithms.algo.algo::SACConfig(...)",
+        old="ray.rllib.algorithms.sac.sac::DEFAULT_CONFIG",
+        new="ray.rllib.algorithms.sac.sac::SACConfig(...)",
         error=True,
     )
     def __getitem__(self, item):

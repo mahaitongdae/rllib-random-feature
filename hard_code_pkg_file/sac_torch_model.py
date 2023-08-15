@@ -76,15 +76,16 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
         TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
         nn.Module.__init__(self)
 
-        s_low = model_config.get('obs_space_low')
-        s_high = model_config.get('obs_space_high')
-        s_dim = model_config.get('obs_space_dim')
-        s_dim = s_dim[0] if (not isinstance(s_dim, int)) else s_dim
+        self.s_low = model_config.get('obs_space_low')
+        self.s_high = model_config.get('obs_space_high')
+        self.s_dim = model_config.get('obs_space_dim')
+        self.s_dim = self.s_dim[0] if (not isinstance(self.s_dim, int)) else self.s_dim
         self.feature_dim = model_config.get('random_feature_dim')
         self.sigma = model_config.get('sigma')
         self.dynamics_type = model_config.get('dynamics_type')
         self.sin_input = model_config.get('sin_input')
         self.dynamics_parameters = model_config.get('dynamics_parameters')
+        self.restore_dir = model_config.get('restore_dir')
 
         # self.nystrom_samples1 = np.random.normal(np.zeros([3,]), np.array([0.3, 0.3, 0.3]), size=(self.feature_dim, s_dim))
         np.random.seed(model_config.get('seed'))
@@ -96,17 +97,23 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
             self.kernel = lambda z: np.exp(-np.linalg.norm(z) ** 2 / (2.))
 
         self.eig_vals1 = nn.parameter.Parameter(data=torch.ones([self.feature_dim, ]), requires_grad=False)
-        self.nystrom_samples1 = nn.parameter.Parameter(data=torch.zeros([self.feature_dim, s_dim]),
-                                                       requires_grad=False)
+        self.nystrom_samples1 = nn.parameter.Parameter(data=torch.zeros([self.feature_dim, self.s_dim]),                                                      requires_grad=False)
         self.S1 = nn.parameter.Parameter(data=torch.eye(self.feature_dim), requires_grad=False)
 
-        if model_config.get('restore_dir') is None:
+        self.n_neurons = self.feature_dim
+        layer1 = nn.Linear(self.n_neurons, 1)  # try default scaling
+        torch.nn.init.zeros_(layer1.bias)
+        layer1.bias.requires_grad = False  # weight is the only thing we update
+        self.output1 = layer1
+
+    def get_nystrom_sample(self):
+        if self.restore_dir is None:
             # only sample when not restore from existing
             print("start nystrom sample")
             # env_creator_func = _global_registry.get(ENV_CREATOR,
             #                                         model_config.get('env_id'))  # from algorithm.py line 2212, Algorithm.__init__()
             # env = env_creator_func(ENV_CONFIG)
-            nystrom_samples1 = np.random.uniform(s_low, s_high, size=(self.feature_dim, s_dim))
+            nystrom_samples1 = np.random.uniform(self.s_low, self.s_high, size=(self.feature_dim, self.s_dim))
             K_m1 = self.get_kernel_matrix(nystrom_samples1)
             [eig_vals1, S1] = np.linalg.eig(K_m1)  # numpy linalg eig doesn't produce negative eigenvalues... (unlike torch)
             eig_vals1 = np.clip(eig_vals1, 1e-8, np.inf)
@@ -114,12 +121,6 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
             self.eig_vals1 = nn.parameter.Parameter(data=torch.from_numpy(eig_vals1).float(), requires_grad=False)
             self.S1 = nn.parameter.Parameter(data=torch.from_numpy(S1).float(), requires_grad=False)
             self.nystrom_samples1 = nn.parameter.Parameter(data=torch.from_numpy(nystrom_samples1), requires_grad=False)
-
-        self.n_neurons = self.feature_dim
-        layer1 = nn.Linear(self.n_neurons, 1)  # try default scaling
-        torch.nn.init.zeros_(layer1.bias)
-        layer1.bias.requires_grad = False  # weight is the only thing we update
-        self.output1 = layer1
 
     def get_kernel_matrix(self, samples):
 

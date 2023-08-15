@@ -5,7 +5,6 @@ import ray
 from ray.rllib.algorithms.sac import SACConfig, RFSACConfig
 from ray.tune.logger import pretty_print
 from ray.rllib.models import ModelCatalog, MODEL_DEFAULTS
-from sac_torch_random_feature_model import SACTorchRFModel
 from ray.rllib.utils.typing import ModelConfigDict
 from ray.rllib.policy.sample_batch import SampleBatch
 from ray.tune.registry import register_env, ENV_CREATOR, _global_registry
@@ -29,7 +28,7 @@ import time
 
 from copy import deepcopy
 
-ModelCatalog.register_custom_model("sac_rf_model", SACTorchRFModel)
+# ModelCatalog.register_custom_model("sac_rf_model", SACTorchRFModel)
 
 RF_MODEL_DEFAULTS: ModelConfigDict = {'random_feature_dim': 8192,
                                       'sigma': 0,
@@ -48,7 +47,7 @@ RF_MODEL_DEFAULTS.update(MODEL_DEFAULTS)
 
 ENV_CONFIG = {'sin_input': True,
               'reward_exponential': False,
-              'reward_scale': 10.,
+              'reward_scale': 1.,
               'reward_type' : 'energy',
               'theta_cal': 'sin_cos',
               'render': False,
@@ -120,7 +119,7 @@ def train_rfsac(args):
     json_path = os.path.join(exp_path, 'model_params.json')
     algo = exp_path.split('/')[-1].split('_')[0]
     env_id = exp_path.split('/')[-1].split('_')[1]
-    RF_MODEL_DEFAULTS.update({'restore_dir': args.restore_path})
+    RF_MODEL_DEFAULTS.update({'restore_dir': args.restore_dir})
     try:
         with open(json_path) as json_file:
             model_params = json.load(json_file)
@@ -150,9 +149,7 @@ def train_rfsac(args):
         config = RFSACConfig().environment(env=env_id, env_config=eval_env_config)\
             .framework("torch") .training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1,
                                                                                      create_env_on_local_worker=True,
-                                                                                     create_env_on_driver = True,
                                                                                      rollout_fragment_length=200)
-
 
     elif algo == 'SAC':
         config = SACConfig().environment(env=env_id, env_config=eval_env_config)\
@@ -160,11 +157,10 @@ def train_rfsac(args):
                                                                                      create_env_on_local_worker=True,
                                                                                     rollout_fragment_length=200
                                                                                     )\
-        .evaluation(
-            # evaluation_num_workers=1,
-                    evaluation_duration=10)
 
-    algo = config.build()
+    algo = config.evaluation(
+            # evaluation_num_workers=1,
+                    evaluation_duration=10).build()
     #.evaluation(evaluation_num_workers=1,
                         #evaluation_duration=50,
                         #evaluation_config=RFSACConfig.overrides(env_config=eval_env_config))
@@ -186,42 +182,44 @@ def train_rfsac(args):
 
     def run_simulation_for_perf(path, deterministic = False):
         algo.restore(path)
-        # from ray.rllib.algorithms.sac.sac_torch_policy import _get_dist_class
-        # policy = algo.workers.local_worker().policy_map['default_policy']
-        # returns = []
-        # model = policy.model
-        # action_dist_class = _get_dist_class(policy, policy.config, policy.action_space)
-        # env_creator_func = _global_registry.get(ENV_CREATOR,
-        #                                         env_id)  # from algorithm.py line 2212, Algorithm.__init__()
-        # env = env_creator_func(eval_env_config)
-        # for eval_epis in range(50):
-        #     ret = 0.
-        #     obs, _ = env.reset(seed=eval_epis)
-        #     for _ in range(200):
-        #         input_ = np.array([obs])
-        #         # Note that for PyTorch, you will have to provide torch tensors here.
-        #         # if args.framework == "torch":
-        #         input_ = torch.from_numpy(input_)
-        #         input_dict = SampleBatch(obs=input_, _is_training=False)
-        #         # action, _, _ = policy.compute_actions_from_input_dict(input_dict=input_dict, explore=False)
-        #         model_out_t, _ = model(input_dict)
-        #         action_dist_inputs_t, _ = model.get_action_model_outputs(model_out_t)
-        #         action_dist_t = action_dist_class(action_dist_inputs_t, model)
-        #         policy_t = (
-        #             action_dist_t.sample()
-        #             if not deterministic
-        #             else action_dist_t.deterministic_sample()
-        #         )
-        #         action = policy_t.detach().clone().numpy()
-        #         obs, reward, terminated, done, info = env.step(action[0])
-        #         ret += reward
-        #     print(ret)
-        #     returns.append(ret)
-        # print("{:.3f} $\pm$ {:.3f}".format(np.mean(returns), np.std(returns)))
-        results = algo.evaluate()
-        print(results)
+        from ray.rllib.algorithms.sac.sac_torch_policy import _get_dist_class
+        policy = algo.workers.local_worker().policy_map['default_policy']
+        returns = []
+        model = policy.model
+        action_dist_class = _get_dist_class(policy, policy.config, policy.action_space)
+        env_creator_func = _global_registry.get(ENV_CREATOR,
+                                                env_id)  # from algorithm.py line 2212, Algorithm.__init__()
+        env = env_creator_func(eval_env_config)
+        for eval_epis in range(10):
+            ret = 0.
+            obs, _ = env.reset(seed=eval_epis)
+            for _ in range(200):
+                input_ = np.array([obs])
+                # Note that for PyTorch, you will have to provide torch tensors here.
+                # if args.framework == "torch":
+                input_ = torch.from_numpy(input_)
+                input_dict = SampleBatch(obs=input_, _is_training=False)
+                action, _, _ = policy.compute_actions_from_input_dict(input_dict=input_dict, explore=False)
+                # model_out_t, _ = model(input_dict)
+                # action_dist_inputs_t, _ = model.get_action_model_outputs(model_out_t)
+                # action_dist_t = action_dist_class(action_dist_inputs_t, model)
+                # policy_t = (
+                #     action_dist_t.sample()
+                #     if not deterministic
+                #     else action_dist_t.deterministic_sample()
+                # )
+                # action = policy_t.detach().clone().numpy()
+                obs, reward, terminated, done, info = env.step(action[0] * 2) # todo: add action post processing according to env_runner_v2
+                if eval_epis == 0:
+                    print(obs)
+                ret += reward
+            # print(ret)
+            returns.append(ret)
+        print("{:.3f} $\pm$ {:.3f}".format(np.mean(returns), np.std(returns)))
+        # results = algo.evaluate()
+        # print(results)
 
-    def evaluate_q(path, deterministic=True):
+    def evaluate_q(path, deterministic=False):
         from ray.rllib.algorithms.sac.sac_torch_policy import _get_dist_class
         algo.restore(path)
         policy = algo.workers.local_worker().policy_map['default_policy']
@@ -231,32 +229,41 @@ def train_rfsac(args):
         obses, actions = [], []
         env_creator_func = _global_registry.get(ENV_CREATOR,
                                                 env_id)  # from algorithm.py line 2212, Algorithm.__init__()
-        env = env_creator_func(eval_env_config)
-        for eval_epis in range(50):
+        env = env_creator_func(ENV_CONFIG)
+        for eval_epis in range(10):
             ret = 0.
             obs, _ = env.reset(seed=eval_epis)
-            for _ in range(200):
+            obses.append(obs)
+            for step in range(200):
                 input_ = np.array([obs])
                 # Note that for PyTorch, you will have to provide torch tensors here.
                 # if args.framework == "torch":
                 input_ = torch.from_numpy(input_)
                 input_dict = SampleBatch(obs=input_, _is_training=False)
                 model_out_t = model(input_dict)
-                # action, _, _ = policy.compute_actions_from_input_dict(input_dict=input_dict, explore=False)
-                action_dist_inputs_t, _ = model.get_action_model_outputs(model_out_t)
-                action_dist_t = action_dist_class(action_dist_inputs_t, model)
-                policy_t = (
-                    action_dist_t.sample()
-                    if not deterministic
-                    else action_dist_t.deterministic_sample()
-                )
+                action, _, _ = policy.compute_actions_from_input_dict(input_dict=input_dict, explore=False)
+                # action_dist_inputs_t, _ = model.get_action_model_outputs(model_out_t)
+                # action_dist_t = action_dist_class(action_dist_inputs_t, model)
+                # policy_t = (
+                #     action_dist_t.sample()
+                #     if not deterministic
+                #     else action_dist_t.deterministic_sample()
+                # )
 
-                obs, reward, terminated, done, info = env.step(policy_t[0])
-                obses.append(input_)
-                actions.append(policy_t)
+                obs, reward, terminated, done, info = env.step(action[0] * 2)
+                if step == 0:
+                    actions.append(action[0])
+                ret += reward
+                if step > 0 :
+                    ret = ret * 0.99
+            print(ret)
 
         input_dict = SampleBatch(obs=obses, _is_training=False)
-        model_out = model(input_dict)
+        model_out, _ = model(input_dict)
+        model_out = torch.from_numpy(model_out)
+        actions = torch.from_numpy(np.array(actions))
+        results = model.get_twin_q_values(model_out, actions)
+        print(results)
 
     def run_simulation_to_plot(path, N = 200, ):
         s = np.zeros((N + 1, n))
@@ -337,21 +344,16 @@ def train_rfsac(args):
 
     # plot_data() # for plot comparison data in pendubot
 
-    run_simulation_for_perf(args.restore_dir)
+    evaluate_q(args.restore_dir)
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--random_feature_dim", default=32768, type=int)
-    # parser.add_argument("--env_id", default='Pendubot-v0', type=str)
-    # parser.add_argument("--algo", default='RFSAC', type=str)
-    # parser.add_argument("--reward_exp", default=True, type=str)
-    # parser.add_argument("--eval", default=False, type=bool)
-    # parser.add_argument("--reward_scale", default=10., type=float)
-    # parser.add_argument("--reward_type", default='lqr', type=str)
-    # parser.add_argument("--theta_cal", default='arctan', type=str)
-    parser.add_argument("--restore_dir", default='/home/mht/ray_results/RFSAC_Pendulum-v1_2023-08-09_00-18-08uvybzro5/checkpoint_003001', type=str)
+    # Pendulum
+    # RFSAC /home/mht/ray_results/RFSAC_Pendulum-v1_2023-08-09_00-18-08uvybzro5/checkpoint_003001
+    # SAC /home/mht/ray_results/SAC_Pendulum-v1/checkpoint_000496
+    parser.add_argument("--restore_dir", default='/home/mht/ray_results/SAC_Pendulum-v1/checkpoint_000496', type=str)
     # parser.add_argument("--comments", default='train with lqr and eval with energy, both exp', type=str)
     args = parser.parse_args()
     train_rfsac(args)
