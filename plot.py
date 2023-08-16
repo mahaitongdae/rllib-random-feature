@@ -3,8 +3,19 @@ import pandas as pd
 import seaborn as sns
 import os
 import numpy as np
+from tensorflow.python.training.summary_io import summary_iterator
 
-def plot():
+def extract_data_from_events(path, tags):
+    data = {key : [] for key in tags+['training_iteration']}
+    for e in summary_iterator(path):
+        for v in e.summary.value:
+            if v.tag in tags :
+                data.get('training_iteration').append(int(e.step / 100))
+                data.get(v.tag).append(v.simple_value)
+
+    return pd.DataFrame.from_dict(data)
+
+def plot(data_source = 'events'):
     sns.set(style='darkgrid', font_scale=1)
     sns.set_palette([(0.0, 0.24705882352941178, 1.0),
                      (0.011764705882352941, 0.9294117647058824, 0.22745098039215686),
@@ -48,18 +59,30 @@ def plot():
     #
     # } # theta directly
 
+    # path_dict = {
+    #     r'$r_{energy}$' : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-19_10-37-28nljvhenj',
+    #     r'$r_{q}$' : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-15_23-57-14kx2hy4ke'
+    # }
     path_dict = {
-        r'$r_{energy}$' : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-19_10-37-28nljvhenj',
-        r'$r_{q}$' : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-15_23-57-14kx2hy4ke'
+        'Nystrom'           : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-08-15_23-25-25bftcfkb2',
+        'Random feature'    : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-08-16_00-59-52isfu35bc',
+        'SAC'               : '/home/mht/ray_results/SAC_Pendubot-v0_2023-08-16_00-34-47hsa2t7v3'
     }
 
 
     dfs = []
-    for rfdim, path in path_dict.items():
+    for key, path in path_dict.items():
         # rfdim = int(rfdim)
-        df = pd.read_csv(os.path.join(path, 'progress.csv'))
-        df['exp_setup'] = rfdim
-        df['episode_reward_evaluated'] = np.log(df['episode_reward_mean'] / 200.) / 10. * 200
+        if data_source == 'csv':
+            df = pd.read_csv(os.path.join(path, 'progress.csv'))
+        elif data_source == 'events':
+            for fname in os.listdir(path):
+                if fname.startswith('events'):
+                    break
+            df = extract_data_from_events(os.path.join(path, fname), ['ray/tune/evaluation/episode_reward_mean'])
+
+        df['Algorithm'] = key
+        # df['episode_reward_evaluated'] = np.log(df['episode_reward_mean'] / 200.) / 10. * 200
         # if rfdim.startswith('SAC'):
         #     df['exp_setup'] = rfdim
         # elif rfdim.endswith('thexp'):
@@ -70,22 +93,23 @@ def plot():
         #     df['exp_setup'] = 'th'
         # else:
         #     df['exp_setup'] = 'sinth'
-        a = 0
         dfs.append(df)
 
     total_df = pd.concat(dfs, ignore_index=True)
-    for y in ['episode_reward_mean', 'episode_len_mean','episode_reward_evaluated']: # 'episode_reward_min', 'episode_reward_max',
+    for y in ['ray/tune/evaluation/episode_reward_mean']: # 'episode_reward_min', 'episode_reward_max',
         plt.figure(figsize=[6, 4])
-        sns.lineplot(total_df, x='training_iteration', y=y, hue='exp_setup', palette='muted')
+        sns.lineplot(total_df, x='training_iteration', y=y, hue='Algorithm', palette='muted')
         # plt.tight_layout()
-        plt.title(y)
+        title = y.split('/')[-1] + 'Pendubot'
+        plt.title(title)
         plt.ylabel('')
+        plt.xlim(0, 800)
         # plt.ylim(-1000, 20)
         plt.xlabel('training iterations')
         plt.tight_layout()
-        plt.show()
-        # figpath = '/home/mht/PycharmProjects/rllib_random_feature/fig/' + y + '.png'
-        # plt.savefig(figpath)
+        # plt.show()
+        figpath = '/home/mht/PycharmProjects/rllib-random-feature/fig/' + title + '.pdf'
+        plt.savefig(figpath)
 
 def plot_pendulum():
     sns.set(style='darkgrid', font_scale=1)

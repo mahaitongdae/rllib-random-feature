@@ -258,7 +258,7 @@ if __name__ == "__main__":
     parser.add_argument("--reward_scale", default=1., type=float)
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
-    parser.add_argument("--seed", default=1, type=int)
+    parser.add_argument("--seed", default=2, type=int)
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
