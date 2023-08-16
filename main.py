@@ -167,7 +167,7 @@ def env_creator_pendubot(env_config):
         return env
 
 def train_rfsac(args):
-    # ray.init(local_mode=True)
+    ray.init() # local_mode=True
     # RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
     RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
     ENV_CONFIG.update({
@@ -178,9 +178,9 @@ def train_rfsac(args):
                       })
     RF_MODEL_DEFAULTS['dynamics_parameters'].update(ENV_CONFIG)
     RF_MODEL_DEFAULTS.update(ENV_CONFIG) # todo:not update twice
-    # RF_MODEL_DEFAULTS.update({'comments': args.comments,
-    #                           'kernel_representation': args.kernel_representation,
-    #                           'seed':args.seed})
+    RF_MODEL_DEFAULTS.update({'comments': args.comments,
+                              'kernel_representation': args.kernel_representation,
+                              'seed':args.seed})
 
     RF_MODEL_DEFAULTS.update(vars(args))
 
@@ -218,9 +218,9 @@ def train_rfsac(args):
                             })
     config = config.evaluation(
         evaluation_parallel_to_training=True,
-        evaluation_interval=50,
+        evaluation_interval=5,
         evaluation_duration=50,
-        evaluation_num_workers=1,
+        evaluation_num_workers=2,
         evaluation_config=RFSACConfig.overrides(render_env=False,
                                                 env_config = eval_env_config
                                                 )
@@ -251,11 +251,11 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=512, type=int)
-    parser.add_argument("--env_id", default='Pendulum-v1', type=str)
-    parser.add_argument("--algo", default='SAC', type=str)
-    parser.add_argument("--reward_exponential", default=True, type=bool)
-    parser.add_argument("--reward_scale", default=10., type=float)
+    parser.add_argument("--random_feature_dim", default=2048, type=int)
+    parser.add_argument("--env_id", default='Pendubot-v0', type=str)
+    parser.add_argument("--algo", default='RFSAC', type=str)
+    parser.add_argument("--reward_exponential", default=False, type=bool)
+    parser.add_argument("--reward_scale", default=1., type=float)
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
     parser.add_argument("--seed", default=1, type=int)
@@ -264,7 +264,7 @@ if __name__ == "__main__":
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
     parser.add_argument("--comments", default='test using parameter to store samples', type=str)
     parser.add_argument("--restore_dir",default=None, type=str)
-    parser.add_argument("--kernel_representation", default='random_feature', type=str)
+    parser.add_argument("--kernel_representation", default='nystrom', type=str)
     parser.add_argument("--train_iter", default=1001, type=int)
     args = parser.parse_args()
     train_rfsac(args)

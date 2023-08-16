@@ -342,9 +342,10 @@ class RFSAC(DQN):
     def __init__(self, *args, **kwargs):
         self._allow_unknown_subkeys += ["policy_model_config", "q_model_config"]
         super().__init__(*args, **kwargs)
-        # if self.config.q_model_config.get('restore_dir') == None:
-        #     self.workers.local_worker().policy_map['default_policy'].model.q_net.get_nystrom_sample()
-        #     self.workers.sync_weights()
+        if self.config.q_model_config.get('restore_dir') == None\
+                and self.config.q_model_config.get('kernel_representation') == 'nystrom':
+            self.workers.local_worker().policy_map['default_policy'].model.q_net.get_nystrom_sample()
+            self.workers.sync_weights()
 
     @classmethod
     @override(DQN)
