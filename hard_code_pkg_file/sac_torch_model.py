@@ -81,6 +81,7 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
         self.s_dim = model_config.get('obs_space_dim')
         self.s_dim = self.s_dim[0] if (not isinstance(self.s_dim, int)) else self.s_dim
         self.feature_dim = model_config.get('random_feature_dim')
+        self.sample_dim = model_config.get('nystrom_sample_dim')
         self.sigma = model_config.get('sigma')
         self.dynamics_type = model_config.get('dynamics_type')
         self.sin_input = model_config.get('sin_input')
@@ -96,9 +97,9 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
             self.kernel = lambda z: np.exp(-np.linalg.norm(z) ** 2 / (2.))
 
         self.eig_vals1 = nn.parameter.Parameter(data=torch.ones([self.feature_dim, ]), requires_grad=False)
-        self.nystrom_samples1 = nn.parameter.Parameter(data=torch.zeros([self.feature_dim, self.s_dim]),
+        self.nystrom_samples1 = nn.parameter.Parameter(data=torch.zeros([self.sample_dim, self.s_dim]),
                                                        requires_grad=False)
-        self.S1 = nn.parameter.Parameter(data=torch.eye(self.feature_dim), requires_grad=False)
+        self.S1 = nn.parameter.Parameter(data=torch.zeros([self.sample_dim, self.feature_dim]), requires_grad=False)
 
         self.n_neurons = self.feature_dim
         layer1 = nn.Linear(self.n_neurons, 1)  # try default scaling
@@ -115,18 +116,25 @@ class NystromSampleQModel(TorchModelV2, nn.Module):
             # env_creator_func = _global_registry.get(ENV_CREATOR,
             #                                         model_config.get('env_id'))  # from algorithm.py line 2212, Algorithm.__init__()
             # env = env_creator_func(ENV_CONFIG)
-            nystrom_samples1 = np.random.uniform(self.s_low, self.s_high, size=(self.feature_dim, self.s_dim))
+
+            # sample nystrom on the sample dim
+            nystrom_samples1 = np.random.uniform(self.s_low, self.s_high, size=(self.sample_dim, self.s_dim))
             K_m1 = self.get_kernel_matrix(nystrom_samples1)
             [eig_vals1, S1] = np.linalg.eig(
                 K_m1)  # numpy linalg eig doesn't produce negative eigenvalues... (unlike torch)
             eig_vals1 = np.clip(eig_vals1, 1e-8, np.inf)
             print(eig_vals1)
-            self.eig_vals1 = nn.parameter.Parameter(data=torch.from_numpy(eig_vals1).float(), requires_grad=False)
-            self.S1 = nn.parameter.Parameter(data=torch.from_numpy(S1).float(), requires_grad=False)
 
-            self.nystrom_samples1 = nn.parameter.Parameter(data=torch.from_numpy(nystrom_samples1), requires_grad=False)
+            # truncate at feature dim and save
+            self.eig_vals1 = nn.parameter.Parameter(data=torch.from_numpy(eig_vals1[:self.feature_dim]).float(),
+                                                    requires_grad=False)
+            # column is the eigenvectors.
+            self.S1 = nn.parameter.Parameter(data=torch.from_numpy(S1[:, :self.feature_dim]).float(),
+                                             requires_grad=False)
+            self.nystrom_samples1 = nn.parameter.Parameter(data=torch.from_numpy(nystrom_samples1),
+                                                           requires_grad=False)
 
-    def get_kernel_matrix(self, samples):
+    def get_kernel_matrix(self, samples):  # TODO: update kernel matrix according to Bo's code
 
         m, d = samples.shape
         K_m = np.empty((m, m))
