@@ -167,7 +167,7 @@ def env_creator_pendubot(env_config):
         return env
 
 def train_rfsac(args):
-    ray.init(local_mode=True) # local_mode=True
+    ray.init() # local_mode=True
     # RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
     RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
     ENV_CONFIG.update({
@@ -202,7 +202,7 @@ def train_rfsac(args):
 
     if args.algo == 'RFSAC':
         config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1) #
+            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=12) #
 
     elif args.algo == 'SAC':
         config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
@@ -219,7 +219,7 @@ def train_rfsac(args):
                             })
     config = config.evaluation(
         evaluation_parallel_to_training=True,
-        evaluation_interval=5,
+        evaluation_interval=20,
         evaluation_duration=50,
         evaluation_num_workers=2,
         evaluation_config=RFSACConfig.overrides(render_env=False,
@@ -253,10 +253,10 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--random_feature_dim", default=256, type=int)
-    parser.add_argument("--env_id", default='Pendulum-v1', type=str)
+    parser.add_argument("--env_id", default='Pendubot-v0', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
     parser.add_argument("--reward_exponential", default=False, type=bool)
-    parser.add_argument("--reward_scale", default=0.2, type=float)
+    parser.add_argument("--reward_scale", default=1.0, type=float)
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
     parser.add_argument("--seed", default=2, type=int)
@@ -267,7 +267,7 @@ if __name__ == "__main__":
     parser.add_argument("--restore_dir",default=None, type=str)
     parser.add_argument("--kernel_representation", default='nystrom', type=str)
     parser.add_argument("--nystrom_sample_dim",
-                        default=512,
+                        default=2048,
                         type=int,
                         help='if use nystrom, sampling on the nystrom_sample_dim. Should be larger than random_feature_dim')
     parser.add_argument("--train_iter", default=1001, type=int)
