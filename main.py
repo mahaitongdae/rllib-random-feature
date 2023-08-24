@@ -5,8 +5,11 @@ from ray.tune.logger import pretty_print
 from ray.rllib.models import ModelCatalog, MODEL_DEFAULTS
 # from sac_torch_random_feature_model import SACTorchRFModel
 from ray.rllib.utils.typing import ModelConfigDict
-from ray.tune.registry import register_env, ENV_CREATOR, _global_registry
+from ray.tune.registry import register_env, ENV_CREATOR, _global_registry, register_trainable
+from ray.rllib.algorithms.sac.rfsac import RFSAC
 import ray
+from ray import tune, air
+from ray.air import session
 
 import os.path as osp
 import sys
@@ -22,6 +25,7 @@ import argparse
 import numpy as np
 import json
 import copy
+from utils import custom_log_creator
 
 from copy import deepcopy
 
@@ -166,32 +170,33 @@ def env_creator_pendubot(env_config):
     else:
         return env
 
-def train_rfsac(args):
-    ray.init(local_mode=True) # local_mode=True
+def train_rfsac(config):
+    # local_mode=True
     # RF_MODEL_DEFAULTS.update({'random_feature_dim': args.random_feature_dim})
-    RF_MODEL_DEFAULTS.update({'dynamics_type' : args.env_id.split('-')[0]})
+    RF_MODEL_DEFAULTS.update({'dynamics_type' : config.get('env_id').split('-')[0]})
     ENV_CONFIG.update({
-                        'reward_exponential':args.reward_exponential,
-                        'reward_type': args.reward_type,
-                        'reward_scale': args.reward_scale,
-                        'theta_cal': args.theta_cal
+                        key: config.get(key) for key in ['reward_exponential',
+                                                         'reward_type',
+                                                         'reward_scale',
+                                                         'theta_cal']
                       })
     RF_MODEL_DEFAULTS['dynamics_parameters'].update(ENV_CONFIG)
     RF_MODEL_DEFAULTS.update(ENV_CONFIG) # todo:not update twice
-    RF_MODEL_DEFAULTS.update({'comments': args.comments,
-                              'kernel_representation': args.kernel_representation,
-                              'nystrom_sample_dim': args.nystrom_sample_dim,
-                              'seed':args.seed})
+    # RF_MODEL_DEFAULTS.update({'comments': args.comments,
+    #                           'kernel_representation': args.kernel_representation,
+    #                           'nystrom_sample_dim': args.nystrom_sample_dim,
+    #                           'seed':args.seed})
 
-    RF_MODEL_DEFAULTS.update(vars(args))
+    RF_MODEL_DEFAULTS.update(config)
 
     register_env('Quadrotor2D-v1', env_creator)
     register_env('CartPoleContinuous-v0', env_creator_cartpole)
     register_env('Pendubot-v0', env_creator_pendubot)
     register_env('Pendulum-v1', env_creator_pendulum)
+    register_trainable('RFSAC', RFSAC)
 
     env_creator_func = _global_registry.get(ENV_CREATOR,
-                                            args.env_id)  # from algorithm.py line 2212, Algorithm.__init__()
+                                            config.get('env_id'))  # from algorithm.py line 2212, Algorithm.__init__()
     env = env_creator_func(ENV_CONFIG)
     RF_MODEL_DEFAULTS.update({
         'obs_space_high': np.clip(env.observation_space.high, -10., 10.).tolist(),
@@ -200,16 +205,46 @@ def train_rfsac(args):
     })
     del env
 
-    if args.algo == 'RFSAC':
-        config = RFSACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
-            .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS).rollouts(num_rollout_workers=1) #
+    focus_param_keys = config.get('focus_param_keys', [])
+    custom_str = ''
+    for key in focus_param_keys:
+        custom_str = custom_str + key
+        custom_str = custom_str + config.get(key, '')
 
-    elif args.algo == 'SAC':
-        config = SACConfig().environment(env=args.env_id, env_config=ENV_CONFIG)\
+    if config.get('algo') == 'RFSAC':
+        algo_name = config.get('algo') + '_' \
+                    + config.get('kernel_representation') + '_' \
+                    + config.get('random_feature_dim') + '_' \
+                    + config.get('nystrom_sample_dim')
+        custom_path = '/home/mht/ray_results/{}/{}'.format(config.get('env_id'), algo_name
+                                                           )
+        config = RFSACConfig()\
+            .debugging(logger_creator=custom_log_creator(custom_path, custom_str))\
+            .resources(num_cpus_per_worker=1,
+                                         num_gpus=0,
+                                         num_cpus_for_local_worker=1)\
+            .environment(env=config.get('env_id'),
+                         env_config=ENV_CONFIG,
+                         )\
+            .framework("torch")\
+            .training(q_model_config=RF_MODEL_DEFAULTS,
+                      optimization_config={
+                         'actor_learning_rate': 3e-4,
+                         'critic_learning_rate': 3e-4,
+                         'entropy_learning_rate': config.get('energy_lr'),}
+                                         )\
+            .rollouts(num_rollout_workers=config.get('num_rollout_workers'),
+                      create_env_on_local_worker=True)
+
+    elif config.get('algo') == 'SAC':
+        custom_path = '/home/mht/ray_results/{}/SAC'.format(config.get('env_id'))
+        config = SACConfig().debugging(logger_creator=custom_log_creator(custom_path, custom_str))\
+            .environment(env=config.get('env_id'),
+                                         env_config=ENV_CONFIG)\
             .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS,
                                          ).rollouts(num_rollout_workers=12)
 
-    # if args.eval:
+
     eval_env_config = copy.deepcopy(ENV_CONFIG)
     eval_env_config.update({
                             'sin_input': True,
@@ -218,10 +253,10 @@ def train_rfsac(args):
                             'reward_type': 'energy',
                             })
     config = config.evaluation(
-        evaluation_parallel_to_training=True,
-        evaluation_interval=5,
+        # evaluation_parallel_to_training=True,
+        evaluation_interval=25,
         evaluation_duration=50,
-        evaluation_num_workers=2,
+        # evaluation_num_workers=1,
         evaluation_config=RFSACConfig.overrides(render_env=False,
                                                 env_config = eval_env_config
                                                 )
@@ -235,14 +270,17 @@ def train_rfsac(args):
         json.dump(RF_MODEL_DEFAULTS, fp, indent=2)
 
     # algo.restore('/home/mht/ray_results/RFSAC_CartPoleContinuous-v0_2023-05-29_06-37-215bpvmwd3/checkpoint_000451')
-    if args.restore_dir is not None:
-        algo.restore(args.restore_dir)
+    if config.get('restore_dir') is not None:
+        algo.restore(config.get('restore_dir'))
         # /home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-16_02-16-18e5y0w4ou/checkpoint_000801
 
-    train_iter = args.train_iter if args.train_iter else 1001
+    train_iter = config.get('train_dir') if config.get('train_dir') else 1001
+    # tune.Tuner('RFSAC',
+    #            run_config=air.RunConfig(stop={'training_iteration': 10}),
+    #            param_space=config.to_dict()).fit()
     for i in range(train_iter):
         result = algo.train()
-        print(pretty_print(result))
+        session.report(result)
 
         if i % 500 == 0:
             checkpoint_dir = algo.save()
@@ -252,14 +290,15 @@ def train_rfsac(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--random_feature_dim", default=256, type=int)
-    parser.add_argument("--env_id", default='Pendulum-v1', type=str)
+    parser.add_argument("--random_feature_dim", default=1024, type=int)
+    parser.add_argument("--env_id", default='Pendubot-v0', type=str)
     parser.add_argument("--algo", default='RFSAC', type=str)
     parser.add_argument("--reward_exponential", default=False, type=bool)
-    parser.add_argument("--reward_scale", default=0.2, type=float)
+    parser.add_argument("--reward_scale", default=1.0, type=float)
     parser.add_argument("--noisy", default=False, type=bool)
     parser.add_argument("--noise_scale", default=0., type=float)
-    parser.add_argument("--seed", default=2, type=int)
+    parser.add_argument("--seed", default=1, type=int)
+    parser.add_argument("--energy_lr", default=3e-4, type=float)
     parser.add_argument("--eval", default=False, type=bool)
     parser.add_argument("--reward_type", default='energy', type=str)
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
@@ -267,12 +306,28 @@ if __name__ == "__main__":
     parser.add_argument("--restore_dir",default=None, type=str)
     parser.add_argument("--kernel_representation", default='nystrom', type=str)
     parser.add_argument("--nystrom_sample_dim",
-                        default=512,
+                        default=2048,
                         type=int,
                         help='if use nystrom, sampling on the nystrom_sample_dim. Should be larger than random_feature_dim')
     parser.add_argument("--train_iter", default=1001, type=int)
+    parser.add_argument("--num_rollout_workers", default=3, type=int)
     args = parser.parse_args()
-    train_rfsac(args)
+    config = vars(args)
+    ray.init(num_cpus=16) # num_cpus=12 # , resources={'custom_resources': 2}
+    config.update({'energy_lr': tune.grid_search([3e-5, 8e-5])})
+    # config.update({'seed': tune.grid_search([1, 2, 3, 4])})
+    config.update({'noisy': tune.grid_search([True, False])})
+    trainable_with_resources = tune.with_resources(train_rfsac,
+                                                   resources=
+                                                    tune.PlacementGroupFactory(
+                                                        [{'CPU': 1.0}] + [{'CPU': 1.0}] * args.num_rollout_workers, strategy="PACK")
+                                                   ) # the doc is not very clear about this.
+    tuner = tune.Tuner(trainable_with_resources,
+                       param_space=config,
+                       tune_config=tune.TuneConfig(num_samples=1,),
+                       run_config=air.RunConfig(stop={'training_iteration': args.train_iter})
+                       )
+    results = tuner.fit()
     # env_creator_func = _global_registry.get(ENV_CREATOR,
     #                                         'Pendulum-v1')
     # env = env_creator_pendubot(ENV_CONFIG)
