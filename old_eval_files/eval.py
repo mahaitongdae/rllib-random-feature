@@ -12,7 +12,7 @@ from gymnasium.wrappers import TransformReward
 from ray.rllib.scripts import evaluate
 from ray.rllib.algorithms.sac import SACConfig
 from copy import deepcopy
-from main import env_creator_cartpole
+from main_tune import env_creator_cartpole
 
 ModelCatalog.register_custom_model("sac_rf_model", SACTorchRFModel)
 

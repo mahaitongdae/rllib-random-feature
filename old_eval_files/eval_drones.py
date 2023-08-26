@@ -12,7 +12,7 @@ from ray.rllib.algorithms.sac.rfsac import RFSACConfig
 from safe_control_gym.utils.configuration import ConfigFactory
 from safe_control_gym.utils.registration import make
 from ray.rllib.utils.typing import ModelConfigDict
-from main import env_creator_cartpole
+from main_tune import env_creator_cartpole
 
 
 from copy import deepcopy

@@ -63,11 +63,20 @@ def plot(data_source = 'events'):
     #     r'$r_{energy}$' : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-19_10-37-28nljvhenj',
     #     r'$r_{q}$' : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-06-15_23-57-14kx2hy4ke'
     # }
+    # path_dict = {
+    #     'Nystrom'           : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-08-15_23-25-25bftcfkb2',
+    #     'Random feature'    : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-08-16_00-59-52isfu35bc',
+    #     'SAC'               : '/home/mht/ray_results/SAC_Pendubot-v0_2023-08-16_00-34-47hsa2t7v3'
+    # }
+
+    # noisy Pendulum
     path_dict = {
-        'Nystrom'           : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-08-15_23-25-25bftcfkb2',
-        'Random feature'    : '/home/mht/ray_results/RFSAC_Pendubot-v0_2023-08-16_00-59-52isfu35bc',
-        'SAC'               : '/home/mht/ray_results/SAC_Pendubot-v0_2023-08-16_00-34-47hsa2t7v3'
+        'Nystrom_256'       : '/home/mht/ray_results/Pendulum-v1/RFSAC_nystrom_256_512/_2023-08-25_01-56-31ryfrfi6n',
+        # 'Nystrom'           : '/home/mht/ray_results/Pendulum-v1/RFSAC_nystrom_512_512/_2023-08-25_01-56-22mj0yhg20',
+        'Random feature'    : '/home/mht/ray_results/Pendulum-v1/RFSAC_random_feature_512_512/_2023-08-25_02-56-436_uo_c04',
+        'SAC'               : '/home/mht/ray_results/Pendulum-v1/SAC/_2023-08-25_02-56-515vwpn54u'
     }
+
 
 
     dfs = []
@@ -96,20 +105,20 @@ def plot(data_source = 'events'):
         dfs.append(df)
 
     total_df = pd.concat(dfs, ignore_index=True)
-    for y in ['ray/tune/evaluation/episode_reward_mean']: # 'episode_reward_min', 'episode_reward_max',
+    for y in ['ray/tune/evaluation/episode_reward_mean', 'episode_reward_mean',]: #  'episode_reward_max',
         plt.figure(figsize=[6, 4])
         sns.lineplot(total_df, x='training_iteration', y=y, hue='Algorithm', palette='muted')
         # plt.tight_layout()
-        title = y.split('/')[-1] + 'Pendubot'
+        title = y.split('/')[-1] + 'Noisy_Pendulum'
         plt.title(title)
         plt.ylabel('')
-        plt.xlim(0, 800)
+        # plt.xlim(0, 800)
         # plt.ylim(-1000, 20)
         plt.xlabel('training iterations')
         plt.tight_layout()
-        # plt.show()
-        figpath = '/home/mht/PycharmProjects/rllib-random-feature/fig/' + title + '.pdf'
-        plt.savefig(figpath)
+        plt.show()
+        # figpath = '/home/mht/PycharmProjects/rllib-random-feature/fig/' + title + '.pdf'
+        # plt.savefig(figpath)
 
 def plot_pendulum():
     sns.set(style='darkgrid', font_scale=1)

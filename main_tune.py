@@ -255,14 +255,11 @@ def train_rfsac(config):
 
     elif config.get('algo') == 'SAC':
         custom_path = '/home/mht/ray_results/{}/SAC'.format(config.get('env_id'))
-        config = SACConfig()\
-            .debugging(logger_creator=custom_log_creator(custom_path, custom_str))\
+        config = SACConfig().debugging(logger_creator=custom_log_creator(custom_path, custom_str))\
             .environment(env=config.get('env_id'),
                                          env_config=ENV_CONFIG)\
             .framework("torch").training(q_model_config=RF_MODEL_DEFAULTS,
-                                         )\
-            .rollouts(num_rollout_workers=config.get('num_rollout_workers'),
-                      create_env_on_local_worker=True)
+                                         ).rollouts(num_rollout_workers=12)
 
 
     eval_env_config = copy.deepcopy(ENV_CONFIG)
@@ -324,7 +321,7 @@ if __name__ == "__main__":
     parser.add_argument("--theta_cal", default='sin_cos', type=str)
     parser.add_argument("--comments", default='test using parameter to store samples', type=str)
     parser.add_argument("--restore_dir",default=None, type=str)
-    parser.add_argument("--kernel_representation", default='random_feature', type=str)
+    parser.add_argument("--kernel_representation", default='nystrom', type=str)
     parser.add_argument("--nystrom_sample_dim",
                         default=512,
                         type=int,
@@ -334,9 +331,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     config = vars(args)
     ray.init(num_cpus=16) # num_cpus=12 # , resources={'custom_resources': 2}
-    config.update({'algo': tune.grid_search(['RFSAC', 'SAC'])})
-    # # config.update({'seed': tune.grid_search([1, 2, 3, 4])})
-    # config.update({'noisy': tune.grid_search([True, False])})
+    config.update({'random_feature_dim': tune.grid_search([512, 256])})
+    # config.update({'seed': tune.grid_search([1, 2, 3, 4])})
+    # config.update({'noisy': tune.grid_search([True])})
     trainable_with_resources = tune.with_resources(train_rfsac,
                                                    resources=
                                                     tune.PlacementGroupFactory(

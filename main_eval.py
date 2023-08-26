@@ -22,7 +22,7 @@ from gymnasium.wrappers import TransformReward
 import argparse
 import numpy as np
 import json
-from main import TransformTriangleObservationWrapper, TransformDoubleTriangleObservationWrapper
+from main_tune import TransformTriangleObservationWrapper, TransformDoubleTriangleObservationWrapper
 import torch
 import time
 
